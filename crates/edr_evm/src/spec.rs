@@ -1,6 +1,7 @@
 use std::{fmt::Debug, marker::PhantomData};
 
 use edr_eth::{
+    beacon::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_BYTECODE},
     block::{self, BlobGas, PartialHeader},
     eips::eip4844,
     l1::{self, BlockEnv, L1ChainSpec},
@@ -9,7 +10,7 @@ use edr_eth::{
     result::InvalidTransaction,
     spec::{ChainSpec, EthHeaderConstants},
     transaction::ExecutableTransaction,
-    B256, U256,
+    Address, B256, U256,
 };
 use edr_rpc_eth::{spec::RpcSpec, RpcTypeFrom, TransactionConversionError};
 pub use revm::EvmWiring;
@@ -93,6 +94,14 @@ pub trait RuntimeSpec:
     /// Type representing an error that occurs when converting an RPC
     /// transaction.
     type RpcTransactionConversionError: std::error::Error;
+
+    /// The address and bytecode (string) of a contract that should be deployed
+    /// in the genesis state, starting at a particular hardfork.
+    ///
+    /// Preventing deployment of a legacy contract can be achieved by setting
+    /// empty bytecode. As such, hardforks should be ordered from oldest to
+    /// newest.
+    const PRE_DEPLOYS: &'static [(Self::Hardfork, &'static [(Address, &'static [u8])])];
 
     /// Casts a transaction validation error into a `TransactionError`.
     ///
@@ -230,6 +239,11 @@ impl RuntimeSpec for L1ChainSpec {
     type RpcBlockConversionError = RemoteBlockConversionError<Self>;
     type RpcReceiptConversionError = edr_rpc_eth::receipt::ConversionError;
     type RpcTransactionConversionError = TransactionConversionError;
+
+    const PRE_DEPLOYS: &'static [(Self::Hardfork, &'static [(Address, &'static [u8])])] = &[(
+        l1::SpecId::CANCUN,
+        &[(BEACON_ROOTS_ADDRESS, &BEACON_ROOTS_BYTECODE)],
+    )];
 
     fn cast_transaction_error<BlockchainErrorT, StateErrorT>(
         error: <Self::SignedTransaction as TransactionValidation>::ValidationError,

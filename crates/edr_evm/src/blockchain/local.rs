@@ -2,7 +2,6 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     num::NonZeroU64,
-    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,7 +9,6 @@ use std::{
 use derive_where::derive_where;
 use edr_eth::{
     account::AccountInfo,
-    beacon::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_BYTECODE},
     block::{BlobGas, BlockOptions, PartialHeader},
     l1,
     log::FilterLog,
@@ -85,7 +83,7 @@ where
         ChainSpecT,
     >,
     chain_id: u64,
-    spec_id: ChainSpecT::Hardfork,
+    hardfork: ChainSpecT::Hardfork,
 }
 
 impl<ChainSpecT> LocalBlockchain<ChainSpecT>
@@ -99,33 +97,34 @@ where
     pub fn new(
         mut genesis_diff: StateDiff,
         chain_id: u64,
-        spec_id: ChainSpecT::Hardfork,
+        hardfork: ChainSpecT::Hardfork,
         options: GenesisBlockOptions,
     ) -> Result<Self, CreationError> {
         const EXTRA_DATA: &[u8] = b"\x12\x34";
 
-        let evm_spec_id = spec_id.into();
-        if evm_spec_id >= l1::SpecId::CANCUN {
-            let beacon_roots_address =
-                Address::from_str(BEACON_ROOTS_ADDRESS).expect("Is valid address");
-            let beacon_roots_contract = Bytecode::new_raw(
-                Bytes::from_str(BEACON_ROOTS_BYTECODE).expect("Is valid bytecode"),
-            );
+        // Deploy predeploys
+        for (deployment_hardfork, predeploys) in ChainSpecT::PRE_DEPLOYS {
+            for (predeploy_address, predeploy_code) in predeploys.iter() {
+                if hardfork >= *deployment_hardfork {
+                    let beacon_roots_contract =
+                        Bytecode::new_raw(Bytes::from_static(predeploy_code));
 
-            genesis_diff.apply_account_change(
-                beacon_roots_address,
-                AccountInfo {
-                    code_hash: beacon_roots_contract.hash_slow(),
-                    code: Some(beacon_roots_contract),
-                    ..AccountInfo::default()
-                },
-            );
+                    genesis_diff.apply_account_change(
+                        *predeploy_address,
+                        AccountInfo {
+                            code_hash: beacon_roots_contract.hash_slow(),
+                            code: Some(beacon_roots_contract),
+                            ..AccountInfo::default()
+                        },
+                    );
+                }
+            }
         }
 
         let mut genesis_state = TrieState::default();
         genesis_state.commit(genesis_diff.clone().into());
 
-        if evm_spec_id >= l1::SpecId::MERGE && options.mix_hash.is_none() {
+        if hardfork.into() >= l1::SpecId::MERGE && options.mix_hash.is_none() {
             return Err(CreationError::MissingPrevrandao);
         }
 
@@ -147,13 +146,13 @@ where
 
         options.extra_data = Some(Bytes::from(EXTRA_DATA));
 
-        let partial_header = PartialHeader::new::<ChainSpecT>(spec_id, options, None);
+        let partial_header = PartialHeader::new::<ChainSpecT>(hardfork, options, None);
         Ok(unsafe {
             Self::with_genesis_block_unchecked(
-                LocalBlock::empty(spec_id, partial_header),
+                LocalBlock::empty(hardfork, partial_header),
                 genesis_diff,
                 chain_id,
-                spec_id,
+                hardfork,
             )
         })
     }
@@ -196,7 +195,7 @@ where
         genesis_block: LocalBlock<ChainSpecT>,
         genesis_diff: StateDiff,
         chain_id: u64,
-        spec_id: ChainSpecT::Hardfork,
+        hardfork: ChainSpecT::Hardfork,
     ) -> Self {
         let genesis_block: Arc<dyn SyncBlock<ChainSpecT, Error = BlockchainError<ChainSpecT>>> =
             Arc::new(genesis_block);
@@ -211,7 +210,7 @@ where
         Self {
             storage,
             chain_id,
-            spec_id,
+            hardfork,
         }
     }
 }
@@ -311,11 +310,11 @@ where
             return Err(BlockchainError::UnknownBlockNumber);
         }
 
-        Ok(self.spec_id)
+        Ok(self.hardfork)
     }
 
     fn spec_id(&self) -> ChainSpecT::Hardfork {
-        self.spec_id
+        self.hardfork
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -354,7 +353,7 @@ where
     ) -> Result<BlockAndTotalDifficulty<ChainSpecT, Self::Error>, Self::Error> {
         let last_block = self.last_block()?;
 
-        validate_next_block(self.spec_id, &last_block, &block)?;
+        validate_next_block(self.hardfork, &last_block, &block)?;
 
         let previous_total_difficulty = self
             .total_difficulty_by_hash(last_block.hash())
@@ -394,7 +393,7 @@ where
             last_header.base_fee_per_gas,
             last_header.state_root,
             previous_total_difficulty,
-            self.spec_id,
+            self.hardfork,
         );
 
         Ok(())

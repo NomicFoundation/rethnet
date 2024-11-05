@@ -1,9 +1,8 @@
-use std::{collections::BTreeMap, fmt::Debug, num::NonZeroU64, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, fmt::Debug, num::NonZeroU64, sync::Arc};
 
 use derive_where::derive_where;
 use edr_eth::{
     account::{Account, AccountInfo, AccountStatus},
-    beacon::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_BYTECODE},
     block::{largest_safe_block_number, safe_block_depth, LargestSafeBlockNumberArgs},
     l1,
     log::FilterLog,
@@ -111,7 +110,7 @@ where
     /// The chain id of the remote blockchain. It might deviate from `chain_id`.
     remote_chain_id: u64,
     network_id: u64,
-    spec_id: ChainSpecT::Hardfork,
+    hardfork: ChainSpecT::Hardfork,
     hardfork_activations: Option<Activations<ChainSpecT>>,
 }
 
@@ -122,7 +121,7 @@ impl<ChainSpecT: SyncRuntimeSpec<Hardfork: Debug>> ForkedBlockchain<ChainSpecT> 
     pub async fn new(
         runtime: runtime::Handle,
         chain_id_override: Option<u64>,
-        spec_id: ChainSpecT::Hardfork,
+        hardfork: ChainSpecT::Hardfork,
         rpc_client: Arc<EthRpcClient<ChainSpecT>>,
         fork_block_number: Option<u64>,
         irregular_state: &mut IrregularState,
@@ -199,48 +198,50 @@ impl<ChainSpecT: SyncRuntimeSpec<Hardfork: Debug>> ForkedBlockchain<ChainSpecT> 
                 });
             }
 
-            if remote_hardfork.into() < l1::SpecId::CANCUN && spec_id.into() >= l1::SpecId::CANCUN {
-                let beacon_roots_address =
-                    Address::from_str(BEACON_ROOTS_ADDRESS).expect("Is valid address");
-                let beacon_roots_contract = Bytecode::new_raw(
-                    Bytes::from_str(BEACON_ROOTS_BYTECODE).expect("Is valid bytecode"),
-                );
+            // Deploy predeploys if the remote hardfork is less than the local hardfork
+            for (deployment_hardfork, predeploys) in ChainSpecT::PRE_DEPLOYS {
+                if remote_hardfork < *deployment_hardfork && hardfork >= *deployment_hardfork {
+                    for (predeploy_address, predeploy_code) in predeploys.iter() {
+                        let deployed_contract =
+                            Bytecode::new_raw(Bytes::from_static(predeploy_code));
 
-                let state_root = state_root_generator.lock().next_value();
+                        let state_root = state_root_generator.lock().next_value();
 
-                irregular_state
-                    .state_override_at_block_number(fork_block_number)
-                    .and_modify(|state_override| {
-                        state_override.diff.apply_account_change(
-                            beacon_roots_address,
-                            AccountInfo {
-                                code_hash: beacon_roots_contract.hash_slow(),
-                                code: Some(beacon_roots_contract.clone()),
-                                ..AccountInfo::default()
-                            },
-                        );
-                    })
-                    .or_insert_with(|| {
-                        let accounts: HashMap<Address, Account> = [(
-                            beacon_roots_address,
-                            Account {
-                                info: AccountInfo {
-                                    code_hash: beacon_roots_contract.hash_slow(),
-                                    code: Some(beacon_roots_contract),
-                                    ..AccountInfo::default()
-                                },
-                                status: AccountStatus::Created | AccountStatus::Touched,
-                                storage: HashMap::new(),
-                            },
-                        )]
-                        .into_iter()
-                        .collect();
+                        irregular_state
+                            .state_override_at_block_number(fork_block_number)
+                            .and_modify(|state_override| {
+                                state_override.diff.apply_account_change(
+                                    *predeploy_address,
+                                    AccountInfo {
+                                        code_hash: deployed_contract.hash_slow(),
+                                        code: Some(deployed_contract.clone()),
+                                        ..AccountInfo::default()
+                                    },
+                                );
+                            })
+                            .or_insert_with(|| {
+                                let accounts: HashMap<Address, Account> = [(
+                                    *predeploy_address,
+                                    Account {
+                                        info: AccountInfo {
+                                            code_hash: deployed_contract.hash_slow(),
+                                            code: Some(deployed_contract),
+                                            ..AccountInfo::default()
+                                        },
+                                        status: AccountStatus::Created | AccountStatus::Touched,
+                                        storage: HashMap::new(),
+                                    },
+                                )]
+                                .into_iter()
+                                .collect();
 
-                        StateOverride {
-                            diff: StateDiff::from(accounts),
-                            state_root,
-                        }
-                    });
+                                StateOverride {
+                                    diff: StateDiff::from(accounts),
+                                    state_root,
+                                }
+                            });
+                    }
+                }
             }
         }
 
@@ -252,7 +253,7 @@ impl<ChainSpecT: SyncRuntimeSpec<Hardfork: Debug>> ForkedBlockchain<ChainSpecT> 
             remote_chain_id,
             fork_block_number,
             network_id,
-            spec_id,
+            hardfork,
             hardfork_activations,
         })
     }
@@ -466,12 +467,12 @@ where
                 }
             })
         } else {
-            Ok(self.spec_id)
+            Ok(self.hardfork)
         }
     }
 
     fn spec_id(&self) -> ChainSpecT::Hardfork {
-        self.spec_id
+        self.hardfork
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -554,7 +555,7 @@ where
     ) -> Result<BlockAndTotalDifficulty<ChainSpecT, Self::Error>, Self::Error> {
         let last_block = self.last_block()?;
 
-        validate_next_block(self.spec_id, &last_block, &block)?;
+        validate_next_block(self.hardfork, &last_block, &block)?;
 
         let previous_total_difficulty = self
             .total_difficulty_by_hash(last_block.hash())
@@ -593,7 +594,7 @@ where
             last_header.base_fee_per_gas,
             last_header.state_root,
             previous_total_difficulty,
-            self.spec_id,
+            self.hardfork,
         );
 
         Ok(())

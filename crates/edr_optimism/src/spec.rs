@@ -2,10 +2,12 @@ use std::marker::PhantomData;
 
 use alloy_rlp::RlpEncodable;
 use edr_eth::{
+    beacon::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_BYTECODE},
     eips::eip1559::{BaseFeeParams, ConstantBaseFeeParams, ForkBaseFeeParams},
     l1,
     result::{HaltReason, InvalidTransaction},
     spec::{ChainSpec, EthHeaderConstants},
+    Address,
 };
 use edr_evm::{
     evm::{
@@ -92,6 +94,11 @@ impl RuntimeSpec for OptimismChainSpec {
     type RpcBlockConversionError = RemoteBlockConversionError<Self>;
     type RpcReceiptConversionError = rpc::receipt::ConversionError;
     type RpcTransactionConversionError = rpc::transaction::ConversionError;
+
+    const PRE_DEPLOYS: &'static [(OptimismSpecId, &'static [(Address, &'static [u8])])] = &[(
+        OptimismSpecId::CANCUN,
+        &[(BEACON_ROOTS_ADDRESS, &BEACON_ROOTS_BYTECODE)],
+    )];
 
     fn cast_transaction_error<BlockchainErrorT, StateErrorT>(
         error: <Self::SignedTransaction as TransactionValidation>::ValidationError,

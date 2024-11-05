@@ -38,6 +38,9 @@ impl RuntimeSpec for GenericChainSpec {
     type RpcReceiptConversionError = crate::rpc::receipt::ConversionError;
     type RpcTransactionConversionError = crate::rpc::transaction::ConversionError;
 
+    const PRE_DEPLOYS: &'static [(Self::Hardfork, &'static [(edr_eth::Address, &'static [u8])])] =
+        <L1ChainSpec as RuntimeSpec>::PRE_DEPLOYS;
+
     fn cast_transaction_error<BlockchainErrorT, StateErrorT>(
         error: <Self::SignedTransaction as TransactionValidation>::ValidationError,
     ) -> TransactionError<Self, BlockchainErrorT, StateErrorT> {

@@ -12,6 +12,7 @@ pub mod rpc;
 pub mod eip2718;
 /// Optimism harforks.
 pub mod hardfork;
+mod predeploy;
 /// Types for Optimism receipts.
 pub mod receipt;
 mod spec;
