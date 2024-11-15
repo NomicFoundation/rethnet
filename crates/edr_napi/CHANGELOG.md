@@ -1,5 +1,11 @@
 # @nomicfoundation/edr
 
+## 0.6.5
+
+### Patch Changes
+
+- 9c062ad: fix: don't panic when a precompile errors
+
 ## 0.6.4
 
 ### Patch Changes

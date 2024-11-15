@@ -1,5 +1,0 @@
----
-"@nomicfoundation/edr": patch
----
-
-fix: don't panic when a precompile errors
