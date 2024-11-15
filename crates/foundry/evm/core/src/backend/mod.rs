@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt::Debug,
     time::Instant,
 };
 
@@ -12,15 +13,19 @@ use alloy_serde::WithOtherFields;
 use eyre::Context;
 pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use revm::{
-    db::{CacheDB, DatabaseRef},
-    inspectors::NoOpInspector,
+    bytecode::Bytecode,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{
-        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, TxKind, KECCAK_EMPTY,
+    primitives::{HashMap as Map, Log, TxKind, KECCAK_EMPTY},
+    specification::hardfork::SpecId,
+    wiring::{
+        default::{block::BlockEnv, Env, TxEnv},
+        EthereumWiring,
     },
-    Database, DatabaseCommit, JournaledState,
+    Database, DatabaseCommit, DatabaseRef, JournaledState,
 };
+use revm_database::CacheDB;
+use revm_inspector::inspectors::NoOpInspector;
+use revm_state::{Account, AccountInfo, EvmState, EvmStorageSlot};
 
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
@@ -44,6 +49,8 @@ pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 
 mod snapshot;
 pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
+
+use crate::wiring::{EnvWiring, ResultAndState};
 
 // A `revm::Database` that is used in forking mode
 type ForkDB = CacheDB<SharedBackend>;
@@ -91,7 +98,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// snapshot. Snapshots can be reverted: [DatabaseExt::revert], however,
     /// depending on the [RevertSnapshotAction], it will keep the snapshot
     /// alive or delete it.
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
+    fn snapshot(&mut self, journaled_state: &JournaledState, env: &EnvWiring) -> U256;
 
     /// Reverts the snapshot if it exists
     ///
@@ -110,7 +117,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
-        env: &mut Env,
+        env: &mut EnvWiring,
         action: RevertSnapshotAction,
     ) -> Option<JournaledState>;
 
@@ -129,7 +136,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn create_select_fork(
         &mut self,
         fork: CreateFork,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork(fork)?;
@@ -143,7 +150,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn create_select_fork_at_transaction(
         &mut self,
         fork: CreateFork,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
         transaction: B256,
     ) -> eyre::Result<LocalForkId> {
@@ -175,7 +182,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn select_fork(
         &mut self,
         id: LocalForkId,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
@@ -190,7 +197,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
@@ -207,21 +214,22 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing
     /// the state in the DB
-    fn transact<I: InspectorExt<Backend>>(
+    fn transact<InspectorT>(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
+        inspector: &mut InspectorT,
     ) -> eyre::Result<()>
     where
+        InspectorT: for<'a> InspectorExt<EthereumWiring<Backend, &'a mut InspectorT>> + Debug,
         Self: Sized;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode
@@ -809,20 +817,15 @@ impl Backend {
     ///
     /// We need to track these mainly to prevent issues when switching between
     /// different evms
-    pub(crate) fn initialize(&mut self, env: &EnvWithHandlerCfg) {
+    pub(crate) fn initialize(&mut self, env: &Box<EnvWiring>, spec_id: SpecId) {
         self.set_caller(env.tx.caller);
-        self.set_spec_id(env.handler_cfg.spec_id);
+        self.set_spec_id(spec_id);
 
         let test_contract = match env.tx.transact_to {
             TxKind::Call(to) => to,
-            TxKind::Create => env.tx.caller.create(env.tx.nonce.unwrap_or_default()),
+            TxKind::Create => env.tx.caller.create(env.tx.nonce),
         };
         self.set_test_contract(test_contract);
-    }
-
-    /// Returns the `EnvWithHandlerCfg` with the current `spec_id` set.
-    fn env_with_handler_cfg(&self, env: Env) -> EnvWithHandlerCfg {
-        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.inner.spec_id)
     }
 
     /// Executes the configured test call of the `env` without committing state
@@ -830,19 +833,25 @@ impl Backend {
     ///
     /// Note: in case there are any cheatcodes executed that modify the
     /// environment, this will update the given `env` with the new values.
-    pub fn inspect<'a, I: InspectorExt<&'a mut Self>>(
+    pub fn inspect<'a, InspectorT>(
         &'a mut self,
-        env: &mut EnvWithHandlerCfg,
-        inspector: I,
-    ) -> eyre::Result<ResultAndState> {
-        self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+        env: &mut Box<EnvWiring>,
+        spec_id: SpecId,
+        inspector: InspectorT,
+    ) -> eyre::Result<ResultAndState>
+    where
+        InspectorT: InspectorExt<EthereumWiring<&'a mut Self, InspectorT>> + Debug,
+    {
+        self.initialize(env, spec_id);
+        let mut evm = crate::utils::new_evm_with_inspector::<
+            EthereumWiring<&'a mut Self, InspectorT>,
+        >(self, env.clone(), spec_id, inspector);
 
         let res = evm
             .transact()
             .wrap_err("backend: failed while inspecting")?;
 
-        env.env = evm.context.evm.inner.env;
+        *env = evm.context.evm.inner.env;
 
         Ok(res)
     }
@@ -913,7 +922,7 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, Block)> {
+    ) -> eyre::Result<(u64, Block<WithOtherFields<Transaction>>)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
@@ -924,16 +933,13 @@ impl Backend {
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, block))
+            Ok((fork_block, block.inner))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
-            let number = block
-                .header
-                .number
-                .ok_or_else(|| BackendError::msg("missing block number"))?;
+            let number = block.header.number;
 
-            Ok((number, block))
+            Ok((number, block.inner))
         }
     }
 
@@ -945,7 +951,7 @@ impl Backend {
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        env: Env,
+        env: EnvWiring,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<Transaction>> {
@@ -953,36 +959,35 @@ impl Backend {
 
         let fork_id = self.ensure_fork_id(id)?.clone();
 
-        let env = self.env_with_handler_cfg(env);
+        let spec_id = self.inner.spec_id;
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
 
-        if let BlockTransactions::Full(txs) = full_block.transactions {
-            for tx in txs {
-                // System transactions such as on L2s don't contain any pricing info so we skip
-                // them otherwise this would cause reverts
-                if is_known_system_sender(tx.from)
-                    || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
-                {
-                    trace!(tx=?tx.hash, "skipping system transaction");
-                    continue;
-                }
-
-                if tx.hash == tx_hash {
-                    // found the target transaction
-                    return Ok(Some(tx));
-                }
-                trace!(tx=?tx.hash, "committing transaction");
-
-                commit_transaction(
-                    WithOtherFields::new(tx),
-                    env.clone(),
-                    journaled_state,
-                    fork,
-                    &fork_id,
-                    &mut NoOpInspector,
-                )?;
+        for tx in full_block.transactions.clone().into_transactions() {
+            // System transactions such as on L2s don't contain any pricing info so we skip
+            // them otherwise this would cause reverts
+            if is_known_system_sender(tx.from)
+                || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+            {
+                trace!(tx=?tx.hash, "skipping system transaction");
+                continue;
             }
+
+            if tx.hash == tx_hash {
+                // found the target transaction
+                return Ok(Some(tx.inner));
+            }
+            trace!(tx=?tx.hash, "committing transaction");
+
+            commit_transaction(
+                tx,
+                env.clone(),
+                spec_id,
+                journaled_state,
+                fork,
+                &fork_id,
+                &mut NoOpInspector,
+            )?;
         }
 
         Ok(None)
@@ -992,7 +997,7 @@ impl Backend {
 // === impl a bunch of `revm::Database` adjacent implementations ===
 
 impl DatabaseExt for Backend {
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
+    fn snapshot(&mut self, journaled_state: &JournaledState, env: &EnvWiring) -> U256 {
         trace!("create snapshot");
         let id = self.inner.snapshots.insert(BackendSnapshot::new(
             self.create_db_snapshot(),
@@ -1007,7 +1012,7 @@ impl DatabaseExt for Backend {
         &mut self,
         id: U256,
         current_state: &JournaledState,
-        current: &mut Env,
+        current: &mut EnvWiring,
         action: RevertSnapshotAction,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
@@ -1114,7 +1119,7 @@ impl DatabaseExt for Backend {
     fn select_fork(
         &mut self,
         id: LocalForkId,
-        env: &mut Env,
+        env: &mut EnvWiring,
         active_journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, "select fork");
@@ -1213,7 +1218,7 @@ impl DatabaseExt for Backend {
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
@@ -1273,7 +1278,7 @@ impl DatabaseExt for Backend {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, ?transaction, "roll fork to transaction");
@@ -1295,14 +1300,17 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<I: InspectorExt<Backend>>(
+    fn transact<InspectorT>(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: &mut EnvWiring,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
-    ) -> eyre::Result<()> {
+        inspector: &mut InspectorT,
+    ) -> eyre::Result<()>
+    where
+        InspectorT: for<'a> InspectorExt<EthereumWiring<Backend, &'a mut InspectorT>> + Debug,
+    {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let id = self.ensure_fork(maybe_id)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
@@ -1319,9 +1327,9 @@ impl DatabaseExt for Backend {
         let mut env = env.clone();
         update_env_block(&mut env, fork_block, &block);
 
-        let env = self.env_with_handler_cfg(env);
+        let spec_id = self.inner.spec_id;
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector)
+        commit_transaction(tx, env, spec_id, journaled_state, fork, &fork_id, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -1413,7 +1421,7 @@ impl DatabaseExt for Backend {
         for (addr, acc) in allocs.iter() {
             // Fetch the account from the journaled state. Will create a new account if it
             // does not already exist.
-            let (state_acc, _) = journaled_state.load_account(*addr, self)?;
+            let state_acc = journaled_state.load_account(*addr, self)?.data;
 
             // Set the account's bytecode and code hash, if the `bytecode` field is present.
             if let Some(bytecode) = acc.code.as_ref() {
@@ -1862,7 +1870,7 @@ impl Default for BackendInner {
 }
 
 /// This updates the currently used env with the fork's environment
-pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
+pub(crate) fn update_current_env_with_fork_env(current: &mut EnvWiring, fork: EnvWiring) {
     current.block = fork.block;
     current.cfg = fork.cfg;
     current.tx.chain_id = fork.tx.chain_id;
@@ -1959,36 +1967,45 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Updates the env's block with the block's data
-fn update_env_block(env: &mut Env, fork_block: u64, block: &Block) {
+fn update_env_block<T>(env: &mut EnvWiring, fork_block: u64, block: &Block<T>) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.coinbase = block.header.miner;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
-    env.block.number = U256::from(block.header.number.unwrap_or(fork_block));
+    env.block.number = U256::from(block.header.number);
 }
 
 /// Executes the given transaction and commits state changes to the database
 /// _and_ the journaled state, with an optional inspector
-fn commit_transaction<I: InspectorExt<Backend>>(
+fn commit_transaction<InspectorT>(
     tx: WithOtherFields<Transaction>,
-    mut env: EnvWithHandlerCfg,
+    mut env: EnvWiring,
+    spec_id: SpecId,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
-    inspector: I,
-) -> eyre::Result<()> {
-    configure_tx_env(&mut env.env, &tx);
+    inspector: InspectorT,
+) -> eyre::Result<()>
+where
+    InspectorT: InspectorExt<EthereumWiring<Backend, InspectorT>> + Debug,
+{
+    configure_tx_env(&mut env, &tx);
 
     let now = Instant::now();
     let res = {
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let db = Backend::new_with_fork(fork_id, fork, journaled_state);
-        crate::utils::new_evm_with_inspector(db, env, inspector)
-            .transact()
-            .wrap_err("backend: failed committing transaction")?
+        crate::utils::new_evm_with_inspector::<EthereumWiring<Backend, InspectorT>>(
+            db,
+            Box::new(env),
+            spec_id,
+            inspector,
+        )
+        .transact()
+        .wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 

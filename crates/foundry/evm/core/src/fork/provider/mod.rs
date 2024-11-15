@@ -281,47 +281,6 @@ impl ProviderBuilder {
 
         Ok(provider)
     }
-
-    /// Constructs the `RetryProvider` with a signer
-    pub fn build_with_signer(self, wallet: EthereumWallet) -> Result<RetryProviderWithSigner> {
-        let ProviderBuilder {
-            url,
-            chain: _,
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
-            jwt,
-            headers,
-            is_local,
-        } = self;
-        let url = url?;
-
-        let retry_layer = RetryBackoffLayer::new(
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            compute_units_per_second,
-        );
-
-        let transport = RuntimeTransportBuilder::new(url.clone())
-            .with_timeout(timeout)
-            .with_headers(headers)
-            .with_jwt(jwt)
-            .build();
-
-        let client = ClientBuilder::default()
-            .layer(retry_layer)
-            .transport(transport, is_local);
-
-        let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
-            .with_recommended_fillers()
-            .wallet(wallet)
-            .on_provider(RootProvider::new(client));
-
-        Ok(provider)
-    }
 }
 
 #[cfg(not(windows))]

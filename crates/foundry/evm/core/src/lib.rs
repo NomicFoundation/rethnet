@@ -5,8 +5,10 @@
 #![warn(unused_crate_dependencies)]
 
 use auto_impl::auto_impl;
-use revm::{inspectors::NoOpInspector, interpreter::CreateInputs, Database, EvmContext, Inspector};
+use revm::{Database, EvmContext, EvmWiring};
+use revm_inspector::{inspectors::NoOpInspector, Inspector};
 use revm_inspectors::access_list::AccessListInspector;
+use revm_interpreter::CreateInputs;
 
 #[macro_use]
 extern crate tracing;
@@ -23,11 +25,12 @@ pub mod opcodes;
 pub mod opts;
 pub mod snapshot;
 pub mod utils;
+mod wiring;
 
 /// An extension trait that allows us to add additional hooks to Inspector for
 /// later use in handlers.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt<DB: Database>: Inspector<DB> {
+pub trait InspectorExt<EvmWiringT: EvmWiring>: Inspector<EvmWiringT> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a
     /// CREATE2 frame.
     ///
@@ -35,7 +38,7 @@ pub trait InspectorExt<DB: Database>: Inspector<DB> {
     /// frame to CREATE2 factory.
     fn should_use_create2_factory(
         &mut self,
-        _context: &mut EvmContext<DB>,
+        _context: &mut EvmContext<EvmWiringT>,
         _inputs: &mut CreateInputs,
     ) -> bool {
         false
@@ -45,5 +48,5 @@ pub trait InspectorExt<DB: Database>: Inspector<DB> {
     fn console_log(&mut self, _input: String) {}
 }
 
-impl<DB: Database> InspectorExt<DB> for NoOpInspector {}
-impl<DB: Database> InspectorExt<DB> for AccessListInspector {}
+impl<EvmWiringT: EvmWiring> InspectorExt<EvmWiringT> for NoOpInspector {}
+impl<EvmWiringT: EvmWiring> InspectorExt<EvmWiringT> for AccessListInspector {}

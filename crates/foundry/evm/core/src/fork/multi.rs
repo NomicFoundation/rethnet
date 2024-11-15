@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+use alloy_provider::network::HeaderResponse;
 use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -22,11 +23,14 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt, StreamExt,
 };
-use revm::primitives::Env;
 
 use super::CreateFork;
-use crate::fork::provider::{
-    runtime_transport::RuntimeTransport, tower::RetryBackoffService, ProviderBuilder, RetryProvider,
+use crate::{
+    fork::provider::{
+        runtime_transport::RuntimeTransport, tower::RetryBackoffService, ProviderBuilder,
+        RetryProvider,
+    },
+    wiring::EnvWiring,
 };
 
 /// The _unique_ identifier for a specific fork, this could be the name of the
@@ -122,7 +126,10 @@ impl MultiFork {
     /// Returns a fork backend
     ///
     /// If no matching fork backend exists it will be created
-    pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend, Env)> {
+    pub fn create_fork(
+        &self,
+        fork: CreateFork,
+    ) -> eyre::Result<(ForkId, SharedBackend, EnvWiring)> {
         trace!(
             "Creating new fork, url={}, block={:?}",
             fork.url,
@@ -144,7 +151,7 @@ impl MultiFork {
         &self,
         fork: ForkId,
         block: u64,
-    ) -> eyre::Result<(ForkId, SharedBackend, Env)> {
+    ) -> eyre::Result<(ForkId, SharedBackend, EnvWiring)> {
         trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollFork(fork, block, sender);
@@ -155,8 +162,8 @@ impl MultiFork {
         rx.recv()?
     }
 
-    /// Returns the `Env` of the given fork, if any
-    pub fn get_env(&self, fork: ForkId) -> eyre::Result<Option<Env>> {
+    /// Returns the `EnvWiring` of the given fork, if any
+    pub fn get_env(&self, fork: ForkId) -> eyre::Result<Option<EnvWiring>> {
         trace!(?fork, "getting env config");
         let (sender, rx) = oneshot_channel();
         let req = Request::GetEnv(fork, sender);
@@ -200,8 +207,8 @@ type Handler = BackendHandler<RetryBackoffService<RuntimeTransport>, Arc<RetryPr
 
 type CreateFuture =
     Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;
-type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;
-type GetEnvSender = OneshotSender<Option<Env>>;
+type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, EnvWiring)>>;
+type GetEnvSender = OneshotSender<Option<EnvWiring>>;
 
 /// Request that's send to the handler
 #[derive(Debug)]
@@ -553,7 +560,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
 
     // we need to use the block number from the block because the env's number can
     // be different on some L2s (e.g. Arbitrum).
-    let number = block.header.number.unwrap_or(meta.block_env.number.to());
+    let number = block.header.number();
 
     let cache_path = fork.block_cache_dir(meta.cfg_env.chain_id, number);
 

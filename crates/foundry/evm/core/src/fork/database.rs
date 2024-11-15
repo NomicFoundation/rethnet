@@ -7,10 +7,12 @@ use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
-    db::{CacheDB, DatabaseRef},
-    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
-    Database, DatabaseCommit,
+    bytecode::Bytecode,
+    primitives::HashMap as Map,
+    state::{Account, AccountInfo},
+    Database, DatabaseCommit, DatabaseRef,
 };
+use revm_database::CacheDB;
 
 use crate::{
     backend::{RevertSnapshotAction, StateSnapshot},
@@ -286,7 +288,10 @@ impl DatabaseRef for ForkDbSnapshot {
 mod tests {
     use std::collections::BTreeSet;
 
-    use revm::primitives::{BlockEnv, CfgEnv};
+    use revm::{
+        primitives::{BlockEnv, CfgEnv},
+        wiring::default::{block::BlockEnv, CfgEnv},
+    };
 
     use super::*;
     use crate::{backend::BlockchainDbMeta, fork::provider::get_http_provider};

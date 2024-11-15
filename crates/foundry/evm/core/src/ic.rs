@@ -1,4 +1,4 @@
-use revm::interpreter::opcode::{PUSH0, PUSH1, PUSH32};
+use revm::bytecode::opcode::{PUSH0, PUSH1, PUSH32};
 use rustc_hash::FxHashMap;
 
 /// Maps from program counter to instruction counter.

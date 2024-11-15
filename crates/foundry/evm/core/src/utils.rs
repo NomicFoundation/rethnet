@@ -3,22 +3,30 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use alloy_chains::NamedChain;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, FixedBytes, U256};
-use alloy_rpc_types::{Block, Transaction};
+use alloy_provider::{
+    network::{BlockResponse, HeaderResponse},
+    Network,
+};
+use alloy_rpc_types::{Block, Transaction, TransactionRequest};
 use eyre::ContextCompat;
-pub use revm::primitives::EvmState as StateChangeset;
 use revm::{
-    db::WrapDatabaseRef,
+    database_interface::WrapDatabaseRef,
     handler::register::EvmHandler,
     interpreter::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
-    primitives::{CreateScheme, EVMError, SpecId, TxKind, KECCAK_EMPTY},
-    FrameOrResult, FrameResult,
+    primitives::{TxKind, KECCAK_EMPTY},
+    specification::hardfork::SpecId,
+    wiring::{default::CreateScheme, result::EVMError},
+    Database, DatabaseRef, Evm, EvmWiring, FrameOrResult, FrameResult,
 };
+use revm_inspector::{inspector_handle_register, Inspector};
+pub use revm_state::EvmState as StateChangeset;
+use revm_wiring::{result::InvalidTransaction, EvmWiring as EvmWiringTypes, TransactionValidation};
 
 pub use crate::ic::*;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, wiring::EnvWiring, InspectorExt};
 
 /// Depending on the configured chain id and block number this should apply any
 /// specific changes
@@ -27,9 +35,12 @@ use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
 /// Should be called with proper chain id (retrieved from provider if not
 /// provided).
-pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::Env, block: &Block) {
+pub fn apply_chain_and_block_specific_env_changes<N: Network>(
+    env: &mut EnvWiring,
+    block: &N::BlockResponse,
+) {
     if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
-        let block_number = block.header.number.unwrap_or_default();
+        let block_number = block.header().number();
 
         match chain {
             NamedChain::Mainnet => {
@@ -46,10 +57,14 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
             | NamedChain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
-                if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
-                    if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = l1_block_number;
-                    }
+                if let Some(l1_block_number) = block
+                    .other_fields()
+                    .and_then(|other| other.get("l1BlockNumber").cloned())
+                    .and_then(|l1_block_number| {
+                        serde_json::from_value::<U256>(l1_block_number).ok()
+                    })
+                {
+                    env.block.number = l1_block_number;
                 }
             }
             _ => {}
@@ -57,7 +72,7 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
     }
 
     // if difficulty is `0` we assume it's past merge
-    if block.header.difficulty.is_zero() {
+    if block.header().difficulty().is_zero() {
         env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
     }
 }
@@ -76,23 +91,68 @@ pub fn get_function(
         ))
 }
 
-/// Configures the env for the transaction
-pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
-    env.tx.caller = tx.from;
-    env.tx.gas_limit = tx.gas as u64;
-    env.tx.gas_price = U256::from(tx.gas_price.unwrap_or_default());
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
-    env.tx.nonce = Some(tx.nonce);
-    env.tx.access_list = tx
-        .access_list
+/// Configures the env for the given RPC transaction.
+pub fn configure_tx_env(env: &mut EnvWiring, tx: &Transaction) {
+    configure_tx_req_env(env, &tx.clone().into()).expect("cannot fail");
+}
+
+/// Configures the env for the given RPC transaction request.
+pub fn configure_tx_req_env(env: &mut EnvWiring, tx: &TransactionRequest) -> eyre::Result<()> {
+    let TransactionRequest {
+        nonce,
+        from,
+        to,
+        value,
+        gas_price,
+        gas,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        max_fee_per_blob_gas,
+        ref input,
+        chain_id,
+        ref blob_versioned_hashes,
+        ref access_list,
+        transaction_type: _,
+        ref authorization_list,
+        sidecar: _,
+    } = *tx;
+
+    // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
+    env.tx.transact_to = to.unwrap_or(TxKind::Create);
+    env.tx.caller = from.ok_or_else(|| eyre::eyre!("missing `from` field"))?;
+    env.tx.gas_limit = gas
+        .ok_or_else(|| eyre::eyre!("missing `gas` field"))?
+        .try_into()
+        .map_err(|_err| eyre::eyre!("gas too large"))?;
+    env.tx.nonce = nonce.ok_or_else(|| eyre::eyre!("missing `nonce` field"))?;
+    env.tx.value = value.unwrap_or_default();
+    env.tx.data = input.input().cloned().unwrap_or_default();
+    env.tx.chain_id = chain_id;
+
+    // Type 1, EIP-2930
+    env.tx.access_list = access_list
         .clone()
         .unwrap_or_default()
         .0
         .into_iter()
         .collect();
-    env.tx.value = tx.value.to();
-    env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
-    env.tx.transact_to = tx.to.map_or(TxKind::Create, TxKind::Call);
+
+    // Type 2, EIP-1559
+    env.tx.gas_price = U256::from(gas_price.or(max_fee_per_gas).unwrap_or_default());
+    env.tx.gas_priority_fee = max_priority_fee_per_gas.map(U256::from);
+
+    // Type 3, EIP-4844
+    env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
+    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.map(U256::from);
+
+    // Type 4, EIP-7702
+    if let Some(authorization_list) = authorization_list {
+        env.tx.authorization_list = Some(revm::specification::eip7702::AuthorizationList::Signed(
+            authorization_list.clone(),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Get the gas used, accounting for refunds
@@ -131,15 +191,23 @@ fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInpu
 ///
 /// Should be installed after [`revm::inspector_handle_register`] and before any
 /// other registers.
-pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
-    handler: &mut EvmHandler<'_, I, DB>,
-) {
+pub fn create2_handler_register<EvmWiringT: EvmWiring>(handler: &mut EvmHandler<'_, EvmWiringT>)
+where
+    EvmWiringT::ExternalContext: InspectorExt<EvmWiringT>,
+    // EVMError<<<EvmWiringT as revm_wiring::EvmWiring>::Database as Database>::Error, <<EvmWiringT
+    // as revm_wiring::EvmWiring>::Transaction as TransactionValidation>::ValidationError>:
+    // From<<<EvmWiringT as revm_wiring::EvmWiring>::Database as revm::Database>::Error>
+{
     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
 
     let create2_overrides_inner = create2_overrides.clone();
     let old_handle = handler.execution.create.clone();
     handler.execution.create = Arc::new(
-        move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+        move |ctx, mut inputs| -> Result<FrameOrResult,
+            EVMError<
+            <<EvmWiringT as EvmWiringTypes>::Database as Database>::Error,
+            <<EvmWiringT as EvmWiringTypes>::Transaction as TransactionValidation>::ValidationError,>>
+         {
             let CreateScheme::Create2 { salt } = inputs.scheme else {
                 return old_handle(ctx, inputs);
             };
@@ -171,8 +239,8 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
             // Sanity check that CREATE2 deployer exists.
             let code_hash = ctx
                 .evm
-                .load_account(DEFAULT_CREATE2_DEPLOYER)?
-                .0
+                .load_account(DEFAULT_CREATE2_DEPLOYER).map_err(EVMError::Database)?
+                .data
                 .info
                 .code_hash;
             if code_hash == KECCAK_EMPTY {
@@ -242,55 +310,71 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
 }
 
 /// Creates a new EVM with the given inspector.
-pub fn new_evm_with_inspector<'a, DB, I>(
-    db: DB,
-    env: revm::primitives::EnvWithHandlerCfg,
-    inspector: I,
-) -> revm::Evm<'a, I, DB>
+pub fn new_evm_with_inspector<'a, EvmWiringT>(
+    db: EvmWiringT::Database,
+    env: Box<
+        revm::wiring::default::Env<
+            <EvmWiringT as EvmWiringTypes>::Block,
+            <EvmWiringT as EvmWiringTypes>::Transaction,
+        >,
+    >,
+    spec_id: EvmWiringT::Hardfork,
+    inspector: EvmWiringT::ExternalContext,
+) -> revm::Evm<'a, EvmWiringT>
 where
-    DB: revm::Database,
-    I: InspectorExt<DB>,
+    EvmWiringT: EvmWiring + 'a,
+    <EvmWiringT as EvmWiringTypes>::Transaction: Default,
+    <<EvmWiringT as EvmWiringTypes>::Transaction as TransactionValidation>::ValidationError:
+        From<InvalidTransaction>,
+    <EvmWiringT as EvmWiringTypes>::Block: Default,
+    <EvmWiringT as EvmWiringTypes>::ExternalContext: Inspector<EvmWiringT>,
+    <EvmWiringT as revm_wiring::EvmWiring>::ExternalContext: InspectorExt<EvmWiringT>,
+    // EVMError<<<
+    // EvmWiringT as revm_wiring::EvmWiring>::Database as Database>::Error, <<EvmWiringT as
+    // revm_wiring::EvmWiring>::Transaction as TransactionValidation>::ValidationError>:
+    // From<<<EvmWiringT as revm_wiring::EvmWiring>::Database as Database>::Error>
 {
+    // TODO Evm::builder can have performance issues see prior comment:
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it
     // has some performance issues.
-    let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
-    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
-    let mut handler = revm::Handler::new(handler_cfg);
-    handler.append_handler_register_plain(revm::inspector_handle_register);
-    handler.append_handler_register_plain(create2_handler_register);
-    revm::Evm::new(context, handler)
-}
-
-/// Creates a new EVM with the given inspector and wraps the database in a
-/// `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'a, DB, I>(
-    db: DB,
-    env: revm::primitives::EnvWithHandlerCfg,
-    inspector: I,
-) -> revm::Evm<'a, I, WrapDatabaseRef<DB>>
-where
-    DB: revm::DatabaseRef,
-    I: InspectorExt<WrapDatabaseRef<DB>>,
-{
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
+    revm::Evm::<'a, EvmWiringT>::builder()
+        .with_db(db)
+        .with_external_context(inspector)
+        .with_env(env)
+        .with_spec_id(spec_id)
+        .append_handler_register(inspector_handle_register)
+        .append_handler_register(create2_handler_register)
+        .build()
 }
 
 #[cfg(test)]
 mod tests {
+    use revm::database_interface::EmptyDB;
+    use revm_inspector::inspectors::NoOpInspector;
+    use revm_wiring::EthereumWiring;
+
     use super::*;
 
     #[test]
     fn build_evm() {
-        let mut db = revm::db::EmptyDB::default();
+        let mut db = EmptyDB::default();
 
-        let env = Box::<revm::primitives::Env>::default();
+        let env = Box::<
+            revm::wiring::default::Env<
+                revm::wiring::default::block::BlockEnv,
+                revm::wiring::default::TxEnv,
+            >,
+        >::default();
         let spec = SpecId::LATEST;
-        let handler_cfg = revm::primitives::HandlerCfg::new(spec);
-        let cfg = revm::primitives::EnvWithHandlerCfg::new(env, handler_cfg);
 
-        let mut inspector = revm::inspectors::NoOpInspector;
+        let mut inspector = NoOpInspector;
 
-        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector);
+        let mut evm = new_evm_with_inspector::<EthereumWiring<&mut EmptyDB, &mut NoOpInspector>>(
+            &mut db,
+            env,
+            spec,
+            &mut inspector,
+        );
         let result = evm.transact().unwrap();
         assert!(result.result.is_success());
     }

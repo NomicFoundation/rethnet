@@ -1,12 +1,14 @@
 use alloy_chains::Chain;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::Block;
+use alloy_rpc_types::AnyNetworkBlock;
 use eyre::WrapErr;
-use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
+use revm::specification::hardfork::SpecId;
+use revm_wiring::default::{block::BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::fork::{environment, provider::ProviderBuilder};
+use crate::wiring::EnvWiring;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EvmOpts {
@@ -15,7 +17,7 @@ pub struct EvmOpts {
     pub env: Env,
 
     /// The hardfork to use for the EVM.
-    pub spec: revm::primitives::SpecId,
+    pub spec: SpecId,
 
     /// Fetch state over a remote instead of starting from empty state.
     #[serde(rename = "eth_rpc_url")]
@@ -67,7 +69,14 @@ impl EvmOpts {
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from
     /// the endpoint (chain id, )
-    pub async fn evm_env(&self) -> eyre::Result<revm::primitives::Env> {
+    pub async fn evm_env(
+        &self,
+    ) -> eyre::Result<
+        revm::wiring::default::Env<
+            revm::wiring::default::block::BlockEnv,
+            revm::wiring::default::TxEnv,
+        >,
+    > {
         if let Some(ref fork_url) = self.fork_url {
             Ok(self.fork_evm_env(fork_url).await?.0)
         } else {
@@ -81,7 +90,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block)> {
+    ) -> eyre::Result<(EnvWiring, AnyNetworkBlock)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -102,7 +111,7 @@ impl EvmOpts {
     }
 
     /// Returns the `revm::Env` configured with only local settings
-    pub fn local_evm_env(&self) -> revm::primitives::Env {
+    pub fn local_evm_env(&self) -> EnvWiring {
         let mut cfg = CfgEnv::default();
         cfg.chain_id = self.env.chain_id.unwrap_or(edr_defaults::DEV_CHAIN_ID);
         cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
@@ -113,7 +122,7 @@ impl EvmOpts {
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
 
-        revm::primitives::Env {
+        EnvWiring {
             block: BlockEnv {
                 number: U256::from(self.env.block_number),
                 coinbase: self.env.block_coinbase,

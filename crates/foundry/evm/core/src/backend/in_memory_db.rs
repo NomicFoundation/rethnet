@@ -2,10 +2,11 @@
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
-    db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
-    Database, DatabaseCommit,
+    database_interface::EmptyDB, primitives::HashMap as Map, state::AccountInfo, Database,
+    DatabaseCommit, DatabaseRef,
 };
+use revm_database::CacheDB;
+use revm_state::{Account, Bytecode};
 
 use crate::snapshot::Snapshots;
 

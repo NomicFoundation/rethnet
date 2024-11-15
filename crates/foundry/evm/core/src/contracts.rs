@@ -37,6 +37,7 @@ impl From<foundry_compilers::ArtifactId> for ArtifactId {
             name,
             source,
             version,
+            build_id: _,
         } = value;
 
         Self {

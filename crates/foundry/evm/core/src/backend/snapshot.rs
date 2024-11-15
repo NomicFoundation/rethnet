@@ -1,9 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
-use revm::{
-    primitives::{AccountInfo, Env, HashMap},
-    JournaledState,
-};
+use revm::{primitives::HashMap, state::AccountInfo, JournaledState};
 use serde::{Deserialize, Serialize};
+
+use crate::wiring::EnvWiring;
 
 /// A minimal abstraction of a state at a certain point in time
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -20,14 +19,14 @@ pub struct BackendSnapshot<T> {
     /// The `journaled_state` state at a specific point
     pub journaled_state: JournaledState,
     /// Contains the env at the time of the snapshot
-    pub env: Env,
+    pub env: EnvWiring,
 }
 
 // === impl BackendSnapshot ===
 
 impl<T> BackendSnapshot<T> {
     /// Takes a new snapshot
-    pub fn new(db: T, journaled_state: JournaledState, env: Env) -> Self {
+    pub fn new(db: T, journaled_state: JournaledState, env: EnvWiring) -> Self {
         Self {
             db,
             journaled_state,

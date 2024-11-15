@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use revm::primitives::Env;
-
 use super::opts::EvmOpts;
 
 mod init;
@@ -15,6 +13,8 @@ pub mod provider;
 
 pub use multi::{ForkId, MultiFork, MultiForkHandler};
 
+use crate::wiring::EnvWiring;
+
 /// Represents a _fork_ of a remote chain whose data is available only via the
 /// `url` endpoint.
 #[derive(Clone, Debug)]
@@ -27,7 +27,7 @@ pub struct CreateFork {
     pub url: String,
     /// The env to create this fork, main purpose is to provide some metadata
     /// for the fork
-    pub env: Env,
+    pub env: EnvWiring,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
 }
