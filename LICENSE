@@ -1,6 +1,10 @@
 MIT License
 
-Copyright (c) 2021 Nomic Foundation
+Copyright (c) 2021 Nomic Foundation. The solidity tests feature of this work 
+is based on and modifies Foundry, which is licensed under the MIT license, 
+copyright (c) 2021 Georgios Konstantopoulos. Documentation for the solidity 
+tests feature is based on Foundry Book which is copyright (c) 2021 Oliver 
+Nordbjerg.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

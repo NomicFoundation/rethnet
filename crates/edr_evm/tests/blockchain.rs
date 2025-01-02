@@ -566,7 +566,7 @@ async fn logs_local() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// See results at https://api.etherscan.io/api?module=logs&action=getLogs&fromBlock=10496585&toBlock=10496585&address=0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+/// See results at <https://api.etherscan.io/api?module=logs&action=getLogs&fromBlock=10496585&toBlock=10496585&address=0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
 #[cfg(feature = "test-remote")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]

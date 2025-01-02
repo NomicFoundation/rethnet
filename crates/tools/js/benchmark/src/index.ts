@@ -9,6 +9,7 @@ import _ from "lodash";
 import path from "path";
 import readline from "readline";
 import zlib from "zlib";
+import { runForgeStdTests, setupForgeStdRepo } from "./solidity-tests";
 
 const SCENARIOS_DIR = "../../../scenarios/";
 const SCENARIO_SNAPSHOT_NAME = "snapshot.json";
@@ -16,7 +17,7 @@ const NEPTUNE_MAX_MIN_FAILURES = 1.05;
 const ANVIL_HOST = "http://127.0.0.1:8545";
 
 interface ParsedArguments {
-  command: "benchmark" | "verify" | "report";
+  command: "benchmark" | "verify" | "report" | "solidity-tests";
   grep?: string;
   // eslint-disable-next-line @typescript-eslint/naming-convention
   benchmark_output: string;
@@ -54,7 +55,7 @@ async function main() {
     description: "Scenario benchmark runner",
   });
   parser.add_argument("command", {
-    choices: ["benchmark", "verify", "report"],
+    choices: ["benchmark", "verify", "report", "solidity-tests"],
     help: "Whether to run a benchmark, verify that there are no regressions or create a report for `github-action-benchmark`",
   });
   parser.add_argument("-g", "--grep", {
@@ -99,6 +100,11 @@ async function main() {
   } else if (args.command === "report") {
     await report(benchmarkOutputPath);
     await flushStdout();
+  } else if (args.command === "solidity-tests") {
+    const repoPath = await setupForgeStdRepo();
+    await runForgeStdTests(repoPath);
+  } else {
+    const _exhaustiveCheck: never = args.command;
   }
 }
 

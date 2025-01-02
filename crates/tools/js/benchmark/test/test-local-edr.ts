@@ -7,7 +7,7 @@ import path from "path";
 it("uses the workspace version of EDR", async function () {
   const hardhatPath = require.resolve("hardhat");
 
-  const edrPath = require.resolve("@nomicfoundation/edr", {
+  const edrPath = require.resolve("@ignored/edr", {
     paths: [hardhatPath],
   });
 

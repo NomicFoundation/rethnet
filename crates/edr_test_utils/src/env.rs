@@ -29,3 +29,32 @@ pub fn get_alchemy_url() -> String {
 pub fn get_infura_url() -> String {
     get_non_empty_env_var_or_panic("INFURA_URL")
 }
+
+/// Enum representing the different types of networks.
+pub enum NetworkType {
+    Ethereum,
+    Sepolia,
+    Optimism,
+    Arbitrum,
+    Polygon,
+}
+
+/// Return the URL of a specific network Alchemy from environment variables.
+///
+/// # Panics
+///
+/// Panics if the environment variable is not defined, or if it is empty.
+pub fn get_alchemy_url_for_network(network_type: NetworkType) -> String {
+    let alchemy_url = get_alchemy_url();
+
+    let url_without_network = alchemy_url
+        .strip_prefix("https://eth-mainnet")
+        .expect("Failed to remove alchemy url network prefix");
+    match network_type {
+        NetworkType::Ethereum => alchemy_url,
+        NetworkType::Sepolia => format!("https://eth-sepolia{url_without_network}"),
+        NetworkType::Optimism => format!("https://opt-mainnet{url_without_network}"),
+        NetworkType::Arbitrum => format!("https://arb-mainnet{url_without_network}"),
+        NetworkType::Polygon => format!("https://polygon-mainnet{url_without_network}"),
+    }
+}

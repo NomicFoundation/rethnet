@@ -1,6 +1,6 @@
 {
-  "name": "@nomicfoundation/edr",
-  "version": "0.7.0",
+  "name": "@ignored/edr",
+  "version": "0.7.0-alpha.1",
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
     "@types/chai": "^4.2.0",
@@ -20,7 +20,7 @@
     "mocha": "^10.0.0",
     "prettier": "^3.2.5",
     "ts-node": "^10.8.0",
-    "typescript": "~5.0.0"
+    "typescript": "~5.5.3"
   },
   "engines": {
     "node": ">= 18"
@@ -52,16 +52,18 @@
   "repository": "NomicFoundation/edr.git",
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release",
+    "build": "pnpm run build:publish",
     "build:debug": "napi build --platform",
+    "build:dev": "napi build --platform --release",
+    "build:publish": "napi build --platform --profile napi-publish",
     "build:scenarios": "napi build --platform --release --features scenarios",
     "build:tracing": "napi build --platform --release --features tracing",
-    "clean": "rm -rf @nomicfoundation/edr.node",
+    "clean": "rm -rf @ignored/edr.node",
     "eslint": "eslint 'test/**/*.ts'",
     "lint": "pnpm run prettier && pnpm run eslint",
     "lint:fix": "pnpm run prettier --write",
     "prepublishOnly": "bash scripts/prepublish.sh",
-    "pretest": "pnpm build",
+    "pretest": "cd ../.. && pnpm build:dev",
     "prettier": "prettier --check \"test/**.ts\"",
     "test": "pnpm tsc && node --max-old-space-size=8192 node_modules/mocha/bin/_mocha --recursive \"test/**/*.ts\"",
     "testNoBuild": "pnpm tsc && node --max-old-space-size=8192 node_modules/mocha/bin/_mocha --recursive \"test/**/*.ts\"",

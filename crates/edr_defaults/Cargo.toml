@@ -1,9 +1,10 @@
 [package]
 name = "edr_defaults"
-version = "0.3.5"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
+alloy-primitives.workspace = true
 ruint = "1.12.3"
 
 [lints]

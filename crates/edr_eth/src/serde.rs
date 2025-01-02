@@ -44,6 +44,22 @@ where
     Ok(s.unwrap_or_default())
 }
 
+/// Deserialize a float vector. Needed to work around <https://github.com/serde-rs/json/issues/721.>
+pub fn deserialize_float_vec<'de, DeserializerT>(
+    d: DeserializerT,
+) -> Result<Vec<f64>, DeserializerT::Error>
+where
+    DeserializerT: Deserializer<'de>,
+{
+    Vec::<serde_json::Number>::deserialize(d)?
+        .into_iter()
+        .map(|n| {
+            n.as_f64()
+                .ok_or_else(|| serde::de::Error::custom("expected a finite float"))
+        })
+        .collect()
+}
+
 /// Helper module for optionally (de)serializing `[]` into `()`.
 pub mod empty_params {
     use super::{Deserialize, Deserializer, Serialize, SerializeSeq, Serializer};
@@ -237,5 +253,16 @@ mod tests {
         let deserialized = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(test_struct, deserialized);
+    }
+
+    #[test]
+    fn test_float_vec() {
+        let json = json!([-0.1234, 2.412_312_589_123_981, 100.0]);
+        let deserialized: Vec<f64> = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(deserialized, vec![-0.1234, 2.412_312_589_123_981, 100.0]);
+        assert_eq!(
+            serde_json::to_string(&deserialized).unwrap(),
+            serde_json::to_string(&json).unwrap()
+        );
     }
 }

@@ -1000,5 +1000,19 @@ mod tests {
                 .await
                 .expect("should have succeeded");
         }
+
+        #[tokio::test]
+        async fn fee_history() {
+            let alchemy_url = get_alchemy_url();
+
+            let _fee_history = TestRpcClient::new(&alchemy_url)
+                .fee_history(
+                    /* block count */ 1,
+                    BlockSpec::latest(),
+                    /* reward percentiles */ None,
+                )
+                .await
+                .expect("should have succeeded");
+        }
     }
 }

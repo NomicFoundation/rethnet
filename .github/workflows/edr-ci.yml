@@ -11,7 +11,6 @@ on:
 
 env:
   RUSTFLAGS: -Dwarnings
-  RUSTDOCFLAGS: -Dwarnings
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -28,7 +27,14 @@ jobs:
       # Install pre-built binaries for cargo hack
       - uses: taiki-e/install-action@cargo-hack
 
-      - run: cargo hack check --feature-powerset --no-dev-deps
+      - name: Cargo check no default features for all crates
+        run: cargo check --all --no-default-features
+
+      - name: Cargo hack for EDR crates
+        run: |
+          chmod +x ./.github/scripts/cargo-hack-edr.sh
+          ./.github/scripts/cargo-hack-edr.sh
+        shell: bash
 
   test-edr-rs:
     name: Test EDR (${{ matrix.os }})
@@ -107,10 +113,13 @@ jobs:
       - uses: ./.github/actions/setup-rust
 
       - name: Cargo doc
-        run: cargo doc --workspace --no-deps --all-features
+        run: |
+          chmod +x ./.github/scripts/cargo-doc.sh
+          ./.github/scripts/cargo-doc.sh
+        shell: bash
 
-  lint:
-    name: Run Prettier
+  build-and-lint:
+    name: Build and lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -118,6 +127,8 @@ jobs:
 
       - name: Install package
         run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Run build script
+        run: pnpm run build:dev
       - name: Run lint script
         run: pnpm run lint
 
@@ -132,7 +143,20 @@ jobs:
         run: pnpm install --frozen-lockfile --prefer-offline
 
       - name: Build edr_napi
-        run: cd crates/edr_napi && pnpm build
+        run: cd crates/edr_napi && pnpm build:dev
 
       - name: Check that there are no uncommitted changes
         run: git diff --exit-code
+
+  edr-integration-tests:
+    name: Run integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup-node
+
+      - name: Install package
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Run integration tests
+        run: pnpm run --recursive --filter './js/integration-tests/*' test

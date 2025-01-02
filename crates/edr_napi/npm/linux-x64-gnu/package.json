@@ -1,5 +1,5 @@
 {
-  "name": "@nomicfoundation/edr-linux-x64-gnu",
+  "name": "@ignored/edr-linux-x64-gnu",
   "repository": {
     "url": "https://github.com/NomicFoundation/edr.git",
     "type": "git"

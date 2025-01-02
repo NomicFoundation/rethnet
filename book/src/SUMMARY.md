@@ -16,6 +16,7 @@
   - [Update N-API targets](02_development/04_update_napi_targets.md)
   - [Using pnpm link](02_development/05_pnpm_link.md)
   - [Style Guide](02_development/06_style_guide.md)
+  - [Solidity test cheatcodes](02_development/07_cheatcodes)
 
 - [Release](./03_release.md)
 

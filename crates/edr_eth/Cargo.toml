@@ -1,7 +1,7 @@
 [package]
 name = "edr_eth"
-version = "0.3.5"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.75"
@@ -16,7 +16,8 @@ k256 = { version = "0.13.1", default-features = false, features = ["arithmetic",
 log = { version = "0.4.17", default-features = false }
 once_cell = { version = "1.18.0", default-features = false, features = ["alloc", "race", "std"] }
 revm-primitives = { version = "7.0", default-features = false, features = ["c-kzg", "hashbrown"] }
-serde = { version = "1.0.147", default-features = false, features = ["derive"], optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 sha2 = { version = "0.10.8", default-features = false }
 sha3 = { version = "0.10.8", default-features = false }
 thiserror = { version = "1.0.37", default-features = false }
@@ -31,7 +32,7 @@ edr_rpc_eth = { version = "0.3.5", path = "../edr_rpc_eth" }
 edr_test_utils = { version = "0.3.5", path = "../edr_test_utils" }
 lazy_static = "1.4.0"
 paste = { version = "1.0.14", default-features = false }
-serde_json = { version = "1.0.89" }
+serde_json = { workspace = true }
 serial_test = "2.0.0"
 tempfile = { version = "3.7.1", default-features = false }
 tokio = { version = "1.23.0", features = ["macros"] }
@@ -39,7 +40,7 @@ tokio = { version = "1.23.0", features = ["macros"] }
 [features]
 default = ["std"]
 rand = ["revm-primitives/rand"]
-serde = ["dep:serde", "c-kzg/serde", "revm-primitives/serde"]
+serde = ["dep:serde", "dep:serde_json", "c-kzg/serde", "revm-primitives/serde"]
 std = ["hash256-std-hasher/std", "hash-db/std", "hex/std", "itertools/use_std", "k256/std", "k256/precomputed-tables", "revm-primitives/std", "serde?/std", "sha2/std", "sha3/std", "triehash/std"]
 test-remote = []
 tracing = ["dep:tracing"]

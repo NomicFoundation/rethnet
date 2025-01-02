@@ -15,6 +15,10 @@ pub struct FeeHistoryResult {
     pub base_fee_per_gas: Vec<U256>,
     /// An array of block gas used ratios. These are calculated as the ratio of
     /// gas used and gas limit.
+    #[cfg_attr(
+        feature = "serde",
+        serde(deserialize_with = "crate::serde::deserialize_float_vec")
+    )]
     pub gas_used_ratio: Vec<f64>,
     /// A two-dimensional array of effective priority fees per gas at the
     /// requested block percentiles.

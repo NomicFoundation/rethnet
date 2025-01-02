@@ -1,0 +1,90 @@
+name: EDR Benchmarks for feat/solidity-tests
+
+on:
+  push:
+    branches:
+      - "feat/solidity-tests"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: crates/tools/js/benchmark
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  # Don't cancel in progress jobs in main
+  cancel-in-progress: ${{ github.ref != 'refs/heads/feat/solidity-tests' }}
+
+jobs:
+  benchmarks-test:
+    name: Benchmarks test
+    environment: github-action-benchmark
+    runs-on: self-hosted
+    # Only run for trusted collaborators since third-parties could run malicious code on the self-hosted benchmark runner.
+    if: github.ref == 'refs/heads/feat/solidity-tests' || github.repository == github.event.pull_request.head.repo.full_name
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup-node
+      - uses: ./.github/actions/setup-rust
+
+      - name: Install packages
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Run benchmark tests
+        run: pnpm test
+
+  js-scenario-benchmark:
+    name: Run JS scenario runner benchmark for Hardhat Node style workload
+    environment: github-action-benchmark
+    runs-on: self-hosted
+    needs: benchmarks-test
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup-node
+      - uses: ./.github/actions/setup-rust
+
+      - name: Rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            .cargo-cache
+            target/
+          save-always: true
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install packages
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Run benchmark
+        run: pnpm run benchmark
+
+      - name: Validate regressions
+        run: pnpm run verify
+
+      - name: Generate report for github-action-benchmark
+        run: pnpm run --silent report | tee scenario-report.json
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: crates/tools/js/benchmark/scenario-report.json
+          gh-repository: github.com/nomic-foundation-automation/edr-benchmark-results
+          gh-pages-branch: feat/solidity-tests
+          benchmark-data-dir-path: bench
+          github-token: ${{ secrets.BENCHMARK_GITHUB_TOKEN }}
+          # Only save the data for main branch pushes. For PRs we only compare
+          auto-push: ${{ github.ref == 'refs/heads/feat/solidity-tests' && github.event_name != 'pull_request' }}
+          alert-threshold: "110%"
+          # Only fail on pull requests, don't break CI in main
+          fail-on-alert: ${{ github.event_name == 'pull_request' }}
+          # Enable Job Summary for PRs
+          summary-always: true
+          max-items-in-chart: 1000

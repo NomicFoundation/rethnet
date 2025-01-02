@@ -1,0 +1,4 @@
+# Compiler files
+cache/
+out/
+.lock

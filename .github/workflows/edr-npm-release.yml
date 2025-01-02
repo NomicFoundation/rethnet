@@ -10,9 +10,12 @@ permissions:
   id-token: write
 on:
   push:
+    # pre-releases will be triggered in any of these branches
+    # production releases will only be triggered for `main`
     branches:
       - main
       - prerelease
+      - feat/solidity-tests
     tags-ignore:
       - "**"
     paths-ignore:
@@ -33,10 +36,10 @@ jobs:
           - host: macos-13
             target: x86_64-apple-darwin
             build: |
-              pnpm build
+              pnpm run build
               strip -x *.node
           - host: windows-2022
-            build: pnpm build
+            build: pnpm run build
             target: x86_64-pc-windows-msvc
           - host: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -56,7 +59,7 @@ jobs:
           - host: macos-13
             target: aarch64-apple-darwin
             build: |
-              pnpm build --target aarch64-apple-darwin
+              pnpm run build --target aarch64-apple-darwin
               strip -x *.node
           - host: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
@@ -399,7 +402,7 @@ jobs:
         run: |
           if git log -1 --pretty=%B | grep "^edr-[0-9]\+\.[0-9]\+\.[0-9]\+-";
           then
-            if [ "$GITHUB_REF" == "refs/heads/main" -o "$GITHUB_REF" == "refs/heads/prerelease" ]; then
+            if [ "${{ github.event_name }}" = "push" ]; then
               echo "Publishing pre-release"
               echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
               pnpm publish --no-git-checks --provenance --tag next --access public
@@ -420,4 +423,4 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NOMICFOUNDATION_ORG_NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.IGNORED_ORG_NPM_TOKEN }}

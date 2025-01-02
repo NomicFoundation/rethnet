@@ -13,7 +13,7 @@
   "license": "SEE LICENSE IN EACH PACKAGE'S LICENSE FILE",
   "pnpm": {
     "overrides": {
-      "hardhat>@nomicfoundation/edr": "workspace:*"
+      "hardhat>@ignored/edr": "workspace:*"
     },
     "patchedDependencies": {
       "hardhat@2.22.17": "patches/hardhat@2.22.17.patch"
@@ -21,7 +21,8 @@
   },
   "private": true,
   "scripts": {
-    "build": "cd crates/edr_napi && pnpm build",
+    "build": "pnpm run --recursive build",
+    "build:dev": "pnpm run --recursive build:dev",
     "lint": "syncpack lint && pnpm run prettier && pnpm run --recursive lint",
     "lint:fix": "syncpack format && pnpm run prettier:fix && pnpm run --recursive lint:fix",
     "prettier": "prettier --check \".github/**/*.{yml,ts,js}\" \"**/*.md\"",

@@ -18,6 +18,7 @@ mod provider;
 mod result;
 #[cfg(feature = "scenarios")]
 mod scenarios;
+mod solidity_tests;
 mod subscribe;
 mod trace;
 mod withdrawal;

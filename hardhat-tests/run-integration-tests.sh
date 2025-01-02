@@ -2,7 +2,7 @@
 
 set -e
 
-pnpm build:edr
+(cd .. && pnpm build)
 
 cd integration
 for i in *; do

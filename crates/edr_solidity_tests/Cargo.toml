@@ -1,0 +1,59 @@
+[package]
+name = "edr_solidity_tests"
+
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+edr_defaults.workspace = true
+
+foundry-cheatcodes.workspace = true
+edr_common.workspace = true
+foundry-compilers = { workspace = true }
+foundry-evm.workspace = true
+
+comfy-table = "7"
+dunce.workspace = true
+eyre.workspace = true
+futures = "0.3"
+num_cpus = "1.16.0"
+proptest = "1"
+rayon = "1"
+serde.workspace = true
+tracing.workspace = true
+yansi.workspace = true
+humantime-serde = "1.1.1"
+
+alloy-dyn-abi.workspace = true
+alloy-json-abi.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+
+tokio = { workspace = true, features = ["time"] }
+evm-disassembler.workspace = true
+thiserror = "1.0.61"
+log = "0.4.22"
+
+[dev-dependencies]
+edr_test_utils.workspace = true
+
+mockall = "0.12"
+criterion = "0.5"
+futures = "0.3"
+globset = "0.4"
+itertools.workspace = true
+once_cell = "1"
+paste = "1.0"
+path-slash = "0.2"
+regex = "1"
+similar-asserts.workspace = true
+semver = "1"
+serial_test = "2.0.0"
+svm = { package = "svm-rs", version = "0.5", default-features = false, features = ["rustls"] }
+tempfile.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[features]
+test-remote = []
+
+[lints]
+workspace = true

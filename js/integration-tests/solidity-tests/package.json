@@ -1,0 +1,29 @@
+{
+  "name": "solidity-tests",
+  "description": "",
+  "version": "1.0.0",
+  "author": "",
+  "devDependencies": {
+    "@ignored/edr": "workspace:*",
+    "@nomicfoundation/edr-helpers": "workspace:*",
+    "@tsconfig/node20": "^20.1.4",
+    "@types/chai": "^4.2.0",
+    "@types/mocha": ">=9.1.0",
+    "@types/node": "^20.0.0",
+    "chai": "^4.3.6",
+    "hardhat": "2.22.17",
+    "prettier": "^3.2.5",
+    "ts-node": "^10.8.0",
+    "typescript": "~5.5.3"
+  },
+  "keywords": [],
+  "license": "MIT",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "build": "pnpm run build:dev",
+    "build:dev": "tsc --build --incremental .",
+    "pretest": "cd ../../.. && pnpm build:dev",
+    "test": "hardhat test"
+  }
+}
