@@ -29,6 +29,8 @@ describe("Provider", () => {
     );
   });
 
+  const encoder = new TextEncoder();
+
   const providerConfig = {
     allowBlocksWithSameTimestamp: false,
     allowUnlimitedContractSize: true,
@@ -37,7 +39,7 @@ describe("Provider", () => {
     blockGasLimit: 300_000_000n,
     chainId: 123n,
     chains: [],
-    coinbase: Buffer.from("0000000000000000000000000000000000000000", "hex"),
+    coinbase: encoder.encode("0000000000000000000000000000000000000000"),
     enableRip7212: false,
     hardfork: "Latest",
     initialBlobGas: {
