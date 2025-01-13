@@ -7,36 +7,32 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-alloy-dyn-abi = { version = "0.7.6", default-features = false }
+alloy-dyn-abi = { version = "0.7.6", default-features = false, features = ["eip712", "std"] }
 alloy-json-abi = { version = "0.7.4", default-features = false }
 alloy-sol-types = { version = "0.5.1", default-features = false, features = ["std"] }
-ansi_term = { version = "0.12.1", default-features = false }
-crossbeam-channel = { version = "0.5.6", default-features = false }
-itertools = { version = "0.12.0", default-features = false }
-indexmap = { version = "2" }
-k256 = { version = "0.13.1", default-features = false, features = ["arithmetic", "ecdsa", "pkcs8", "precomputed-tables", "std"] }
-log = { version = "0.4.20", default-features = false }
-# The `async` feature ensures that a tokio runtime is available
-napi = { version = "2.16.11", default-features = false, features = ["async", "error_anyhow", "napi8", "serde-json"] }
-napi-derive = "2.16.11"
-edr_defaults = { version = "0.3.5", path = "../edr_defaults" }
-edr_evm = { version = "0.3.5", path = "../edr_evm", features = ["tracing"]}
-edr_eth = { version = "0.3.5", path = "../edr_eth" }
-edr_provider = { version = "0.3.5", path = "../edr_provider" }
-edr_rpc_eth = { version = "0.3.5", path = "../edr_rpc_eth" }
+derive-where = { version = "1.2.7", default-features = false }
+edr_eth = { path = "../edr_eth" }
+edr_evm = { path = "../edr_evm" }
+edr_generic = { path = "../edr_generic" }
+edr_napi_core = { path = "../edr_napi_core" }
+edr_optimism = { path = "../edr_optimism", optional = true }
+edr_provider = { path = "../edr_provider" }
+edr_rpc_client = { path = "../edr_rpc_client" }
 edr_solidity ={ version = "0.3.5", path = "../edr_solidity" }
-serde_json = { version = "1.0.85", default-features = false, features = ["alloc"] }
-thiserror = { version = "1.0.37", default-features = false }
+mimalloc = { version = "0.1.39", default-features = false, features = ["local_dynamic_tls"] }
+# The `async` feature ensures that a tokio runtime is available
+napi = { version = "2.16.10", default-features = false, features = ["async", "error_anyhow", "napi8", "serde-json"] }
+napi-derive = "2.16.12"
+rand = { version = "0.8.4", optional = true }
+semver = "1.0.22"
+serde = { version = "1.0.209", features = ["derive"] }
+serde_json = { version = "1.0.127" }
+strum = { version = "0.26.0", features = ["derive"] }
 tracing = { version = "0.1.37", default-features = false, features = ["std"] }
 tracing-flame = { version = "0.2.0", default-features = false, features = ["smallvec"] }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["ansi", "env-filter", "fmt", "parking_lot", "smallvec", "std"] }
 parking_lot = { version = "0.12.1", default-features = false }
 lazy_static = { version = "1.4.0", features = [] }
-rand = { version = "0.8.4", optional = true }
-semver = "1.0.22"
-serde = { version = "1.0.189", features = ["derive"] }
-strum = { version = "0.26.0", features = ["derive"] }
-mimalloc = { version = "0.1.39", default-features = false, features = ["local_dynamic_tls"] }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 openssl-sys = { version = "0.9.93", features = ["vendored"] }
@@ -54,11 +50,9 @@ openssl-sys = { version = "0.9.93", features = ["vendored"] }
 napi-build = "2.0.1"
 
 [features]
-tracing = ["edr_evm/tracing", "edr_provider/tracing"]
+optimism = ["dep:edr_optimism"]
 scenarios = ["rand"]
-
-[profile.release]
-lto = true
+tracing = ["edr_evm/tracing", "edr_napi_core/tracing", "edr_provider/tracing"]
 
 [lints]
 workspace = true

@@ -1,3 +1,4 @@
+import { toBytes } from "@nomicfoundation/ethereumjs-util";
 import {
   EdrContext,
   TracingMessage,
@@ -49,4 +50,8 @@ export function collectMessages(
   return trace.filter(
     (traceItem) => "isStaticCall" in traceItem
   ) as TracingMessage[];
+}
+
+export function toBuffer(x: Parameters<typeof toBytes>[0]) {
+  return Buffer.from(toBytes(x));
 }

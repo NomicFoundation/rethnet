@@ -1,0 +1,112 @@
+diff --git a/dist/src/index.js b/dist/src/index.js
+index d5ee6ca40339da8260275bd0b7ba8cf7e3e878b6..a4d8d3f2cf286b0fd128eebe940dd585ef323a86 100644
+--- a/dist/src/index.js
++++ b/dist/src/index.js
+@@ -13,16 +13,11 @@ var __createBinding = (this && this.__createBinding) || (Object.create ? (functi
+ var __exportStar = (this && this.__exportStar) || function(m, exports) {
+     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+ };
+-var __importDefault = (this && this.__importDefault) || function (mod) {
+-    return (mod && mod.__esModule) ? mod : { "default": mod };
+-};
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.smock = void 0;
+-const hardhat_1 = __importDefault(require("hardhat"));
+ const matchers_1 = require("./chai-plugin/matchers");
+ require("./chai-plugin/types");
+ const sandbox_1 = require("./sandbox");
+-const utils_1 = require("./utils");
+ let sandbox;
+ async function fake(spec, opts = {}) {
+     if (!sandbox)
+@@ -36,9 +31,6 @@ async function mock(contractName, signerOrOptions) {
+ }
+ async function init() {
+     sandbox = await sandbox_1.Sandbox.create();
+-    (await (0, utils_1.getHardhatBaseProvider)(hardhat_1.default)).on('hardhatNetworkReset', async () => {
+-        sandbox = await sandbox_1.Sandbox.create();
+-    });
+ }
+ __exportStar(require("./types"), exports);
+ exports.smock = { fake, mock, matchers: matchers_1.matchers };
+diff --git a/dist/src/index.js.map b/dist/src/index.js.map
+index 26966ef864b18d05146e4c976045541a3d8142a7..9f2a0955e069878e537fab1369ffd715ce1231ae 100644
+--- a/dist/src/index.js.map
++++ b/dist/src/index.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"index.js","sourceRoot":"","sources":["../../src/index.ts"],"names":[],"mappings":";;;;;;;;;;;;;;;;;;;;AAEA,sDAA0B;AAC1B,qDAAkD;AAClD,+BAA6B;AAC7B,uCAAoC;AAEpC,mCAAiD;AAEjD,IAAI,OAAgB,CAAC;AAErB,KAAK,UAAU,IAAI,CAAyB,IAAsB,EAAE,OAA4B,EAAE;IAChG,IAAI,CAAC,OAAO;QAAE,MAAM,IAAI,EAAE,CAAC;IAC3B,OAAO,MAAM,OAAO,CAAC,IAAI,CAAC,IAAI,EAAE,IAAI,CAAC,CAAC;AACxC,CAAC;AAED,KAAK,UAAU,IAAI,CACjB,YAAoB,EACpB,eAAgD;IAEhD,IAAI,CAAC,OAAO;QAAE,MAAM,IAAI,EAAE,CAAC;IAE3B,OAAO,MAAM,OAAO,CAAC,IAAI,CAAC,YAAY,EAAE,eAAe,CAAC,CAAC;AAC3D,CAAC;AAED,KAAK,UAAU,IAAI;IACjB,OAAO,GAAG,MAAM,iBAAO,CAAC,MAAM,EAAE,CAAC;IAGjC,CAAC,MAAM,IAAA,8BAAsB,EAAC,iBAAG,CAAC,CAAC,CAAC,EAAE,CAAC,qBAAqB,EAAE,KAAK,IAAI,EAAE;QACvE,OAAO,GAAG,MAAM,iBAAO,CAAC,MAAM,EAAE,CAAC;IACnC,CAAC,CAAC,CAAC;AACL,CAAC;AAED,0CAAwB;AACX,QAAA,KAAK,GAAG,EAAE,IAAI,EAAE,IAAI,EAAE,QAAQ,EAAR,mBAAQ,EAAE,CAAC"}
+\ No newline at end of file
++{"version":3,"file":"index.js","sourceRoot":"","sources":["../../src/index.ts"],"names":[],"mappings":";;;;;;;;;;;;;;;;;AAGA,qDAAkD;AAClD,+BAA6B;AAC7B,uCAAoC;AAIpC,IAAI,OAAgB,CAAC;AAErB,KAAK,UAAU,IAAI,CAAyB,IAAsB,EAAE,OAA4B,EAAE;IAChG,IAAI,CAAC,OAAO;QAAE,MAAM,IAAI,EAAE,CAAC;IAC3B,OAAO,MAAM,OAAO,CAAC,IAAI,CAAC,IAAI,EAAE,IAAI,CAAC,CAAC;AACxC,CAAC;AAED,KAAK,UAAU,IAAI,CACjB,YAAoB,EACpB,eAAgD;IAEhD,IAAI,CAAC,OAAO;QAAE,MAAM,IAAI,EAAE,CAAC;IAE3B,OAAO,MAAM,OAAO,CAAC,IAAI,CAAC,YAAY,EAAE,eAAe,CAAC,CAAC;AAC3D,CAAC;AAED,KAAK,UAAU,IAAI;IACjB,OAAO,GAAG,MAAM,iBAAO,CAAC,MAAM,EAAE,CAAC;AACnC,CAAC;AAED,0CAAwB;AACX,QAAA,KAAK,GAAG,EAAE,IAAI,EAAE,IAAI,EAAE,QAAQ,EAAR,mBAAQ,EAAE,CAAC"}
+\ No newline at end of file
+diff --git a/dist/src/sandbox.d.ts b/dist/src/sandbox.d.ts
+index ade4d57a5ed41dfbd1c6a91bb88aa10f994591c8..b8cb3e9974fbc636bfb0aa253a9bbee8578c1969 100644
+--- a/dist/src/sandbox.d.ts
++++ b/dist/src/sandbox.d.ts
+@@ -1,11 +1,11 @@
+ import { FactoryOptions } from '@nomiclabs/hardhat-ethers/types';
+ import { BaseContract, ContractFactory, ethers } from 'ethers';
+-import { EDRProvider, FakeContract, FakeContractOptions, FakeContractSpec, MockContractFactory } from './types';
++import { FakeContract, FakeContractOptions, FakeContractSpec, MockContractFactory } from './types';
+ export declare class Sandbox {
+     private vm;
+     private static nonce;
+     private addressToSighashToFunction;
+-    constructor(provider: EDRProvider);
++    private constructor();
+     private overrideCall;
+     private getCalledFunction;
+     private addFunctionToMap;
+diff --git a/dist/src/sandbox.js b/dist/src/sandbox.js
+index fc1f25f3172f09b143d28e06d7267ab096fbf541..372e4096aab6182ad98b69ce398964fe2a01f967 100644
+--- a/dist/src/sandbox.js
++++ b/dist/src/sandbox.js
+@@ -32,7 +32,6 @@ class Sandbox {
+     constructor(provider) {
+         this.addressToSighashToFunction = new Map();
+         this.vm = new observable_vm_1.ObservableVM(provider._node._vm);
+-        provider._setCallOverrideCallback((address, data) => this.overrideCall(address, data));
+     }
+     async overrideCall(address, data) {
+         const calledFunction = this.getCalledFunction(address, data);
+@@ -76,12 +75,15 @@ class Sandbox {
+         if (hardhat_1.default.network.name !== 'hardhat') {
+             throw new Error(`Smock is only compatible with the "hardhat" network, got: ${hardhat_1.default.network.name}. Follow this issue for more info: https://github.com/defi-wonderland/smock/issues/29`);
+         }
+-        const provider = await (0, utils_1.getHardhatBaseProvider)(hardhat_1.default);
+-        const node = provider._node;
++        const providerAny = await (0, utils_1.getHardhatBaseProvider)(hardhat_1.default);
++        const node = providerAny._node;
+         if (node === undefined) {
+-            await provider._init();
++            await providerAny._init();
+         }
+-        return new Sandbox(provider);
++        const provider = providerAny;
++        const sandbox = new Sandbox(provider);
++        await provider._setCallOverrideCallback((address, data) => sandbox.overrideCall(address, data));
++        return sandbox;
+     }
+     static getNextNonce() {
+         return Sandbox.nonce++;
+diff --git a/dist/src/sandbox.js.map b/dist/src/sandbox.js.map
+index 85fcf3742c59af40322f0d260bce79e154cbece7..31b0f100d43ecee1648138baf94746fdd74a5cf4 100644
+--- a/dist/src/sandbox.js.map
++++ b/dist/src/sandbox.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"sandbox.js","sourceRoot":"","sources":["../../src/sandbox.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
++{"version":3,"file":"sandbox.js","sourceRoot":"","sources":["../../src/sandbox.ts"],"names":[],"mappings":";;;;;;AAAA,sEAA2D;AAG3D,sDAA0B;AAC1B,mEAAuE;AACvE,+DAA2F;AAE3F,mDAA+C;AAE/C,mCAAoE;AAGpE,IAAI,kBAA6C,CAAC;AAClD,IAAI;IACF,kBAAkB,GAAG,OAAO,CAAC,8DAA8D,CAAC,CAAC,kBAAkB,CAAC;CACjH;AAAC,OAAO,GAAG,EAAE;IACZ,MAAM,EAAE,UAAU,EAAE,GAAG,OAAO,CAAC,uDAAuD,CAAC,CAAC;IACxF,kBAAkB,GAAG,CAAC,KAAa,EAAE,EAAE;QACrC,MAAM,UAAU,GAAG,IAAI,UAAU,CAAC,KAAK,CAAC,CAAC;QACzC,OAAO,UAAU,CAAC,iBAAiB,EAAE,CAAC,CAAC,CAAC,UAAU,CAAC,WAAW,EAAE,CAAC,CAAC,CAAC,EAAE,CAAC;IACxE,CAAC,CAAC;CACH;AAGD,IAAI,yBAA8B,CAAC;AACnC,IAAI;IACF,yBAAyB,GAAG,OAAO,CAAC,kDAAkD,CAAC,CAAC,yBAAyB,CAAC;CACnH;AAAC,OAAO,GAAG,EAAE;IACZ,yBAAyB,GAAG,OAAO,CAAC,wCAAwC,CAAC,CAAC,yBAAyB,CAAC;CACzG;AAED,MAAa,OAAO;IAKlB,YAAoB,QAAqB;QAFjC,+BAA0B,GAA+D,IAAI,GAAG,EAAE,CAAC;QAGzG,IAAI,CAAC,EAAE,GAAG,IAAI,4BAAY,CAAC,QAAQ,CAAC,KAAK,CAAC,GAAG,CAAC,CAAC;IACjD,CAAC;IAEO,KAAK,CAAC,YAAY,CAAC,OAAe,EAAE,IAAY;QACtD,MAAM,cAAc,GAAG,IAAI,CAAC,iBAAiB,CAAC,OAAO,EAAE,IAAI,CAAC,CAAC;QAE7D,MAAM,iBAAiB,GAAG,MAAM,CAAA,cAAc,aAAd,cAAc,uBAAd,cAAc,CAAE,oBAAoB,CAAC,IAAI,CAAC,CAAA,CAAC;QAE3E,IAAI,iBAAiB,KAAK,SAAS,EAAE;YACnC,OAAO,SAAS,CAAC;SAClB;QAED,MAAM,CAAC,MAAM,EAAE,YAAY,CAAC,GAAG,iBAAiB,CAAC;QAEjD,OAAO;YACL,MAAM;YACN,YAAY;SACb,CAAC;IACJ,CAAC;IAEO,iBAAiB,CAAC,OAAe,EAAE,IAAY;QACrD,MAAM,UAAU,GAAG,IAAI,yBAAO,CAAC,OAAO,CAAC,CAAC,QAAQ,EAAE,CAAC,WAAW,EAAE,CAAC;QAEjE,MAAM,iBAAiB,GAAG,IAAI,CAAC,0BAA0B,CAAC,GAAG,CAAC,UAAU,CAAC,CAAC;QAC1E,IAAI,IAAI,CAAC,MAAM,IAAI,CAAC,EAAE;YACpB,MAAM,OAAO,GAAG,IAAI,GAAG,IAAI,CAAC,KAAK,CAAC,CAAC,EAAE,CAAC,CAAC,CAAC,QAAQ,CAAC,KAAK,CAAC,CAAC;YACxD,MAAM,UAAU,GAAG,OAAO,CAAC,WAAW,EAAE,CAAC;YAEzC,OAAO,CAAA,iBAAiB,aAAjB,iBAAiB,uBAAjB,iBAAiB,CAAE,GAAG,CAAC,UAAU,CAAC,KAAI,IAAI,CAAC;SACnD;QAED,OAAO,CAAA,iBAAiB,aAAjB,iBAAiB,uBAAjB,iBAAiB,CAAE,GAAG,CAAC,IAAI,CAAC,KAAI,IAAI,CAAC;IAC9C,CAAC;IAEO,gBAAgB,CAAC,OAAe,EAAE,OAAsB,EAAE,aAAwC;QACxG,MAAM,UAAU,GAAG,OAAO,CAAC,WAAW,EAAE,CAAC;QACzC,MAAM,UAAU,GAAG,OAAO,KAAK,IAAI,CAAC,CAAC,CAAC,IAAI,CAAC,CAAC,CAAC,OAAO,CAAC,WAAW,EAAE,CAAC;QAEnE,IAAI,iBAAiB,GAAG,IAAI,CAAC,0BAA0B,CAAC,GAAG,CAAC,UAAU,CAAC,CAAC;QACxE,IAAI,iBAAiB,KAAK,SAAS,EAAE;YACnC,iBAAiB,GAAG,IAAI,GAAG,EAAE,CAAC;YAC9B,IAAI,CAAC,0BAA0B,CAAC,GAAG,CAAC,UAAU,EAAE,iBAAiB,CAAC,CAAC;SACpE;QAED,iBAAiB,CAAC,GAAG,CAAC,UAAU,EAAE,aAAa,CAAC,CAAC;IACnD,CAAC;IAED,KAAK,CAAC,IAAI,CAA4B,IAAsB,EAAE,OAA4B,EAAE;QAC1F,OAAO,IAAA,mCAAkB,EACvB,IAAI,CAAC,EAAE,EACP,IAAI,CAAC,OAAO,IAAI,IAAA,yBAAiB,GAAE,EACnC,MAAM,IAAA,0CAAuB,EAAC,IAAI,CAAC,EACnC,IAAI,CAAC,QAAQ,IAAI,iBAAG,CAAC,MAAM,CAAC,QAAQ,EACpC,CAAC,OAAO,EAAE,OAAO,EAAE,aAAa,EAAE,EAAE,CAAC,IAAI,CAAC,gBAAgB,CAAC,OAAO,EAAE,OAAO,EAAE,aAAa,CAAC,CAC5F,CAAC;IACJ,CAAC;IAED,KAAK,CAAC,IAAI,CACR,YAAoB,EACpB,eAAgD;QAEhD,OAAO,IAAA,0CAAyB,EAC9B,IAAI,CAAC,EAAE,EACP,YAAY,EACZ,CAAC,OAAO,EAAE,OAAO,EAAE,aAAa,EAAE,EAAE,CAAC,IAAI,CAAC,gBAAgB,CAAC,OAAO,EAAE,OAAO,EAAE,aAAa,CAAC,EAC3F,eAAe,CAChB,CAAC;IACJ,CAAC;IAED,MAAM,CAAC,KAAK,CAAC,MAAM;QAEjB,IAAI,iBAAG,CAAC,OAAO,CAAC,IAAI,KAAK,SAAS,EAAE;YAClC,MAAM,IAAI,KAAK,CACb,6DAA6D,iBAAG,CAAC,OAAO,CAAC,IAAI,uFAAuF,CACrK,CAAC;SACH;QAED,MAAM,WAAW,GAAQ,MAAM,IAAA,8BAAsB,EAAC,iBAAG,CAAC,CAAC;QAC3D,MAAM,IAAI,GAAG,WAAW,CAAC,KAAK,CAAC;QAG/B,IAAI,IAAI,KAAK,SAAS,EAAE;YACtB,MAAM,WAAW,CAAC,KAAK,EAAE,CAAC;SAC3B;QAED,MAAM,QAAQ,GAAgB,WAAW,CAAC;QAC1C,MAAM,OAAO,GAAG,IAAI,OAAO,CAAC,QAAQ,CAAC,CAAC;QAEtC,MAAM,QAAQ,CAAC,wBAAwB,CAAC,CAAC,OAAO,EAAE,IAAI,EAAE,EAAE,CAAC,OAAO,CAAC,YAAY,CAAC,OAAO,EAAE,IAAI,CAAC,CAAC,CAAC;QAEhG,OAAO,OAAO,CAAC;IACjB,CAAC;IAED,MAAM,CAAC,YAAY;QACjB,OAAO,OAAO,CAAC,KAAK,EAAE,CAAC;IACzB,CAAC;;AArGH,0BAsGC;AApGgB,aAAK,GAAW,CAAC,CAAC"}
+\ No newline at end of file
+diff --git a/dist/src/types.d.ts b/dist/src/types.d.ts
+index eb61f3d20c4111dd9f86b60f13122730221c5a31..892a0ece779b0d92d79ab940fc0dd53f04e6a477 100644
+--- a/dist/src/types.d.ts
++++ b/dist/src/types.d.ts
+@@ -92,7 +92,7 @@ export type CallOverrideCallback = (address: Buffer, data: Buffer) => Promise<{
+     shouldRevert: boolean;
+ } | undefined>;
+ export interface EDRProvider {
+-    _setCallOverrideCallback(callback: CallOverrideCallback): void;
++    _setCallOverrideCallback(callback: CallOverrideCallback): Promise<void>;
+     _node: {
+         _vm: VM;
+     };

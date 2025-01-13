@@ -2,24 +2,25 @@
 
 use std::sync::Arc;
 
-use edr_eth::{Address, Bytes, U256};
+use derive_where::derive_where;
+use edr_eth::{spec::HaltReasonTrait, Address, Bytes, U256};
 
 use crate::{build_model::ContractMetadata, exit_code::ExitCode};
 
 /// An EVM trace where the steps are nested according to the call stack.
 #[derive(Clone, Debug)]
-pub enum NestedTrace {
+pub enum NestedTrace<HaltReasonT: HaltReasonTrait> {
     /// Represents a create trace.
-    Create(CreateMessage),
+    Create(CreateMessage<HaltReasonT>),
     /// Represents a call trace.
-    Call(CallMessage),
+    Call(CallMessage<HaltReasonT>),
     /// Represents a precompile trace.
-    Precompile(PrecompileMessage),
+    Precompile(PrecompileMessage<HaltReasonT>),
 }
 
-impl NestedTrace {
+impl<HaltReasonT: HaltReasonTrait> NestedTrace<HaltReasonT> {
     /// Returns the exit code of the trace.
-    pub fn exit_code(&self) -> &ExitCode {
+    pub fn exit_code(&self) -> &ExitCode<HaltReasonT> {
         match self {
             Self::Create(create) => &create.exit,
             Self::Call(call) => &call.exit,
@@ -30,7 +31,7 @@ impl NestedTrace {
 
 /// Represents a precompile message.
 #[derive(Clone, Debug)]
-pub struct PrecompileMessage {
+pub struct PrecompileMessage<HaltReasonT: HaltReasonTrait> {
     /// Precompile number.
     pub precompile: u32,
     /// Calldata buffer
@@ -40,7 +41,7 @@ pub struct PrecompileMessage {
     /// Return data buffer.
     pub return_data: Bytes,
     /// EVM exit code.
-    pub exit: ExitCode,
+    pub exit: ExitCode<HaltReasonT>,
     /// How much gas was used.
     pub gas_used: u64,
     /// Depth of the message.
@@ -49,14 +50,14 @@ pub struct PrecompileMessage {
 
 /// Represents a create message.
 #[derive(Clone, Debug)]
-pub struct CreateMessage {
+pub struct CreateMessage<HaltReasonT: HaltReasonTrait> {
     // The following is just an optimization: When processing this traces it's useful to know ahead
     // of time how many subtraces there are.
     /// Number of subtraces. Used to speed up the processing of the traces in
     /// JS.
     pub number_of_subtraces: u32,
     /// Children messages.
-    pub steps: Vec<NestedTraceStep>,
+    pub steps: Vec<NestedTraceStep<HaltReasonT>>,
     /// Resolved metadata of the contract that is being executed.
     pub contract_meta: Option<Arc<ContractMetadata>>,
     /// Address of the deployed contract.
@@ -68,7 +69,7 @@ pub struct CreateMessage {
     /// Return data buffer.
     pub return_data: Bytes,
     /// EVM exit code.
-    pub exit: ExitCode,
+    pub exit: ExitCode<HaltReasonT>,
     /// How much gas was used.
     pub gas_used: u64,
     /// Depth of the message.
@@ -77,14 +78,14 @@ pub struct CreateMessage {
 
 /// Represents a call message with contract metadata.
 #[derive(Clone, Debug)]
-pub struct CallMessage {
+pub struct CallMessage<HaltReasonT: HaltReasonTrait> {
     // The following is just an optimization: When processing this traces it's useful to know ahead
     // of time how many subtraces there are.
     /// Number of subtraces. Used to speed up the processing of the traces in
     /// JS.
     pub number_of_subtraces: u32,
     /// Children messages.
-    pub steps: Vec<NestedTraceStep>,
+    pub steps: Vec<NestedTraceStep<HaltReasonT>>,
     /// Resolved metadata of the contract that is being executed.
     pub contract_meta: Option<Arc<ContractMetadata>>,
     /// Calldata buffer
@@ -100,7 +101,7 @@ pub struct CallMessage {
     /// Return data buffer.
     pub return_data: Bytes,
     /// EVM exit code.
-    pub exit: ExitCode,
+    pub exit: ExitCode<HaltReasonT>,
     /// How much gas was used.
     pub gas_used: u64,
     /// Depth of the message.
@@ -109,35 +110,40 @@ pub struct CallMessage {
 
 /// Represents a create or call message.
 #[derive(Clone, Debug)]
-pub enum CreateOrCallMessage {
+pub enum CreateOrCallMessage<HaltReasonT: HaltReasonTrait> {
     /// Represents a create message.
-    Create(CreateMessage),
+    Create(CreateMessage<HaltReasonT>),
     /// Represents a call message.
-    Call(CallMessage),
+    Call(CallMessage<HaltReasonT>),
 }
 
-impl From<CreateMessage> for CreateOrCallMessage {
-    fn from(value: CreateMessage) -> Self {
+impl<HaltReasonT: HaltReasonTrait> From<CreateMessage<HaltReasonT>>
+    for CreateOrCallMessage<HaltReasonT>
+{
+    fn from(value: CreateMessage<HaltReasonT>) -> Self {
         CreateOrCallMessage::Create(value)
     }
 }
 
-impl From<CallMessage> for CreateOrCallMessage {
-    fn from(value: CallMessage) -> Self {
+impl<HaltReasonT: HaltReasonTrait> From<CallMessage<HaltReasonT>>
+    for CreateOrCallMessage<HaltReasonT>
+{
+    fn from(value: CallMessage<HaltReasonT>) -> Self {
         CreateOrCallMessage::Call(value)
     }
 }
 
 /// Represents a create or call message.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum CreateOrCallMessageRef<'a> {
+#[derive(Debug)]
+#[derive_where(Clone, Copy)]
+pub(crate) enum CreateOrCallMessageRef<'a, HaltReasonT: HaltReasonTrait> {
     /// Represents a create message.
-    Create(&'a CreateMessage),
+    Create(&'a CreateMessage<HaltReasonT>),
     /// Represents a call message.
-    Call(&'a CallMessage),
+    Call(&'a CallMessage<HaltReasonT>),
 }
 
-impl<'a> CreateOrCallMessageRef<'a> {
+impl<'a, HaltReasonT: HaltReasonTrait> CreateOrCallMessageRef<'a, HaltReasonT> {
     pub fn contract_meta(&self) -> Option<Arc<ContractMetadata>> {
         match self {
             CreateOrCallMessageRef::Create(create) => create.contract_meta.as_ref().map(Arc::clone),
@@ -145,7 +151,7 @@ impl<'a> CreateOrCallMessageRef<'a> {
         }
     }
 
-    pub fn exit_code(&self) -> &ExitCode {
+    pub fn exit_code(&self) -> &ExitCode<HaltReasonT> {
         match self {
             CreateOrCallMessageRef::Create(create) => &create.exit,
             CreateOrCallMessageRef::Call(call) => &call.exit,
@@ -166,7 +172,7 @@ impl<'a> CreateOrCallMessageRef<'a> {
         }
     }
 
-    pub fn steps(&self) -> &'a [NestedTraceStep] {
+    pub fn steps(&self) -> &'a [NestedTraceStep<HaltReasonT>] {
         match self {
             CreateOrCallMessageRef::Create(create) => create.steps.as_slice(),
             CreateOrCallMessageRef::Call(call) => call.steps.as_slice(),
@@ -174,8 +180,10 @@ impl<'a> CreateOrCallMessageRef<'a> {
     }
 }
 
-impl<'a> From<&'a CreateOrCallMessage> for CreateOrCallMessageRef<'a> {
-    fn from(value: &'a CreateOrCallMessage) -> Self {
+impl<'a, HaltReasonT: HaltReasonTrait> From<&'a CreateOrCallMessage<HaltReasonT>>
+    for CreateOrCallMessageRef<'a, HaltReasonT>
+{
+    fn from(value: &'a CreateOrCallMessage<HaltReasonT>) -> Self {
         match value {
             CreateOrCallMessage::Create(create) => CreateOrCallMessageRef::Create(create),
             CreateOrCallMessage::Call(call) => CreateOrCallMessageRef::Call(call),
@@ -183,27 +191,31 @@ impl<'a> From<&'a CreateOrCallMessage> for CreateOrCallMessageRef<'a> {
     }
 }
 
-impl<'a> From<&'a CreateMessage> for CreateOrCallMessageRef<'a> {
-    fn from(value: &'a CreateMessage) -> Self {
+impl<'a, HaltReasonT: HaltReasonTrait> From<&'a CreateMessage<HaltReasonT>>
+    for CreateOrCallMessageRef<'a, HaltReasonT>
+{
+    fn from(value: &'a CreateMessage<HaltReasonT>) -> Self {
         CreateOrCallMessageRef::Create(value)
     }
 }
 
-impl<'a> From<&'a CallMessage> for CreateOrCallMessageRef<'a> {
-    fn from(value: &'a CallMessage) -> Self {
+impl<'a, HaltReasonT: HaltReasonTrait> From<&'a CallMessage<HaltReasonT>>
+    for CreateOrCallMessageRef<'a, HaltReasonT>
+{
+    fn from(value: &'a CallMessage<HaltReasonT>) -> Self {
         CreateOrCallMessageRef::Call(value)
     }
 }
 
 /// Represents a nested trace step with contract metadata.
 #[derive(Clone, Debug)]
-pub enum NestedTraceStep {
+pub enum NestedTraceStep<HaltReasonT: HaltReasonTrait> {
     /// Represents a create message.
-    Create(CreateMessage),
+    Create(CreateMessage<HaltReasonT>),
     /// Represents a call message.
-    Call(CallMessage),
+    Call(CallMessage<HaltReasonT>),
     /// Represents a precompile message.
-    Precompile(PrecompileMessage),
+    Precompile(PrecompileMessage<HaltReasonT>),
     /// Minimal EVM step that contains only PC (program counter).
     Evm(EvmStep),
 }

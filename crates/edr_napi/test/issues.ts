@@ -2,15 +2,23 @@ import { JsonStreamStringify } from "json-stream-stringify";
 
 import {
   ContractAndFunctionName,
+  GENERIC_CHAIN_TYPE,
+  genericChainProviderFactory,
   MineOrdering,
-  Provider,
-  SpecId,
   SubscriptionEvent,
 } from "..";
 import { ALCHEMY_URL, getContext, isCI } from "./helpers";
 
 describe("Provider", () => {
   const context = getContext();
+
+  before(async () => {
+    await context.registerProviderFactory(
+      GENERIC_CHAIN_TYPE,
+      genericChainProviderFactory()
+    );
+  });
+
   const providerConfig = {
     allowBlocksWithSameTimestamp: false,
     allowUnlimitedContractSize: true,
@@ -21,14 +29,7 @@ describe("Provider", () => {
     chains: [],
     coinbase: Buffer.from("0000000000000000000000000000000000000000", "hex"),
     enableRip7212: false,
-    genesisAccounts: [
-      {
-        secretKey:
-          "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        balance: 1000n * 10n ** 18n,
-      },
-    ],
-    hardfork: SpecId.Latest,
+    hardfork: "Latest",
     initialBlobGas: {
       gasUsed: 0n,
       excessGas: 0n,
@@ -45,6 +46,13 @@ describe("Provider", () => {
       },
     },
     networkId: 123n,
+    ownedAccounts: [
+      {
+        secretKey:
+          "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        balance: 1000n * 10n ** 18n,
+      },
+    ],
   };
 
   const loggerConfig = {
@@ -69,20 +77,23 @@ describe("Provider", () => {
     }
 
     // This test is slow because the debug_traceTransaction is performed on a large transaction.
-    this.timeout(240_000);
+    this.timeout(1_800_000);
 
-    const provider = await Provider.withConfig(
-      context,
+    const provider = await context.createProvider(
+      GENERIC_CHAIN_TYPE,
       {
         fork: {
           jsonRpcUrl: ALCHEMY_URL,
         },
+        genesisState: [],
         initialBaseFeePerGas: 0n,
         ...providerConfig,
       },
       loggerConfig,
-      {},
-      (_event: SubscriptionEvent) => {}
+      {
+        subscriptionCallback: (_event: SubscriptionEvent) => {},
+      },
+      {}
     );
 
     const debugTraceTransaction = `{

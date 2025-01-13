@@ -1,16 +1,24 @@
-use std::{marker::PhantomData, num::NonZeroU64, sync::Arc};
+use core::fmt::Debug;
+use std::{num::NonZeroU64, sync::Arc};
 
-use edr_eth::{block::PartialHeader, receipt::BlockReceipt, Address, SpecId, B256, U256};
+use derive_where::derive_where;
+use edr_eth::{
+    block::PartialHeader,
+    log::FilterLog,
+    receipt::{ExecutionReceipt, ReceiptTrait},
+    spec::{ChainSpec, HardforkTrait},
+    transaction::ExecutableTransaction,
+    Address, HashMap, HashSet, B256, U256,
+};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
-use revm::primitives::{HashMap, HashSet};
 
 use super::{sparse, InsertError, SparseBlockchainStorage};
-use crate::{chain_spec::ChainSpec, state::StateDiff, Block, LocalBlock};
+use crate::{spec::RuntimeSpec, state::StateDiff, Block, BlockReceipts, EmptyBlock, LocalBlock};
 
 /// A reservation for a sequence of blocks that have not yet been inserted into
 /// storage.
 #[derive(Debug)]
-struct Reservation {
+struct Reservation<HardforkT: HardforkTrait> {
     first_number: u64,
     last_number: u64,
     interval: u64,
@@ -18,32 +26,59 @@ struct Reservation {
     previous_state_root: B256,
     previous_total_difficulty: U256,
     previous_diff_index: usize,
-    spec_id: SpecId,
+    hardfork: HardforkT,
 }
+
+/// Helper type for a chain-specific [`ReservableSparseBlockchainStorage`].
+pub type ReservableSparseBlockchainStorageForChainSpec<ChainSpecT> =
+    ReservableSparseBlockchainStorage<
+        Arc<<ChainSpecT as RuntimeSpec>::BlockReceipt>,
+        Arc<<ChainSpecT as RuntimeSpec>::LocalBlock>,
+        <ChainSpecT as ChainSpec>::Hardfork,
+        <ChainSpecT as ChainSpec>::SignedTransaction,
+    >;
 
 /// A storage solution for storing a subset of a Blockchain's blocks in-memory,
 /// while lazily loading blocks that have been reserved.
-#[derive(Debug)]
-pub struct ReservableSparseBlockchainStorage<BlockT, ChainSpecT>
-where
-    BlockT: Block<ChainSpecT> + Clone + ?Sized,
-    ChainSpecT: ChainSpec,
-{
-    reservations: RwLock<Vec<Reservation>>,
-    storage: RwLock<SparseBlockchainStorage<BlockT, ChainSpecT>>,
+#[derive_where(Debug; BlockReceiptT, BlockT, HardforkT)]
+pub struct ReservableSparseBlockchainStorage<
+    BlockReceiptT: ReceiptTrait,
+    BlockT,
+    HardforkT: HardforkTrait,
+    SignedTransactionT,
+> {
+    reservations: RwLock<Vec<Reservation<HardforkT>>>,
+    storage: RwLock<SparseBlockchainStorage<BlockReceiptT, BlockT, SignedTransactionT>>,
     // We can store the state diffs contiguously, as reservations don't contain any diffs.
     // Diffs are a mapping from one state to the next, so the genesis block contains the initial
     // state.
     state_diffs: Vec<(u64, StateDiff)>,
     number_to_diff_index: HashMap<u64, usize>,
     last_block_number: u64,
-    phantom: PhantomData<ChainSpecT>,
 }
 
-impl<BlockT, ChainSpecT> ReservableSparseBlockchainStorage<BlockT, ChainSpecT>
-where
-    BlockT: Block<ChainSpecT> + Clone,
-    ChainSpecT: ChainSpec,
+impl<BlockReceiptT: ReceiptTrait, BlockT, HardforkT: HardforkTrait, SignedTransactionT>
+    ReservableSparseBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
+{
+    /// Constructs a new instance with no blocks.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+    pub fn empty(last_block_number: u64) -> Self {
+        Self {
+            reservations: RwLock::new(Vec::new()),
+            storage: RwLock::new(SparseBlockchainStorage::default()),
+            state_diffs: Vec::new(),
+            number_to_diff_index: HashMap::new(),
+            last_block_number,
+        }
+    }
+}
+
+impl<
+        BlockReceiptT: ReceiptTrait,
+        BlockT: Block<SignedTransactionT> + Clone,
+        HardforkT: HardforkTrait,
+        SignedTransactionT: ExecutableTransaction,
+    > ReservableSparseBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
 {
     /// Constructs a new instance with the provided block as genesis block.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -54,117 +89,7 @@ where
             state_diffs: vec![(0, diff)],
             number_to_diff_index: std::iter::once((0, 0)).collect(),
             last_block_number: 0,
-            phantom: PhantomData,
         }
-    }
-
-    /// Constructs a new instance with no blocks.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    pub fn empty(last_block_number: u64) -> Self {
-        Self {
-            reservations: RwLock::new(Vec::new()),
-            storage: RwLock::new(SparseBlockchainStorage::default()),
-            state_diffs: Vec::new(),
-            number_to_diff_index: HashMap::new(),
-            last_block_number,
-            phantom: PhantomData,
-        }
-    }
-
-    /// Retrieves the block by hash, if it exists.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    pub fn block_by_hash(&self, hash: &B256) -> Option<BlockT> {
-        self.storage.read().block_by_hash(hash).cloned()
-    }
-
-    /// Retrieves the block that contains the transaction with the provided
-    /// hash, if it exists.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    pub fn block_by_transaction_hash(&self, transaction_hash: &B256) -> Option<BlockT> {
-        self.storage
-            .read()
-            .block_by_transaction_hash(transaction_hash)
-            .cloned()
-    }
-
-    /// Retrieves whether a block with the provided number exists.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    pub fn contains_block_number(&self, number: u64) -> bool {
-        self.storage.read().contains_block_number(number)
-    }
-
-    /// Retrieves the last block number.
-    pub fn last_block_number(&self) -> u64 {
-        self.last_block_number
-    }
-
-    /// Retrieves the logs that match the provided filter.
-    pub fn logs(
-        &self,
-        from_block: u64,
-        to_block: u64,
-        addresses: &HashSet<Address>,
-        normalized_topics: &[Option<Vec<B256>>],
-    ) -> Result<Vec<edr_eth::log::FilterLog>, BlockT::Error> {
-        let storage = self.storage.read();
-        sparse::logs(&storage, from_block, to_block, addresses, normalized_topics)
-    }
-
-    /// Retrieves the sequence of diffs from the genesis state to the state of
-    /// the block with the provided number, if it exists.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    pub fn state_diffs_until_block(&self, block_number: u64) -> Option<&[(u64, StateDiff)]> {
-        let diff_index = self
-            .number_to_diff_index
-            .get(&block_number)
-            .copied()
-            .or_else(|| {
-                let reservations = self.reservations.read();
-                find_reservation(&reservations, block_number)
-                    .map(|reservation| reservation.previous_diff_index)
-            })?;
-
-        Some(&self.state_diffs[0..=diff_index])
-    }
-
-    /// Retrieves the receipt of the transaction with the provided hash, if it
-    /// exists.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    pub fn receipt_by_transaction_hash(
-        &self,
-        transaction_hash: &B256,
-    ) -> Option<Arc<BlockReceipt>> {
-        self.storage
-            .read()
-            .receipt_by_transaction_hash(transaction_hash)
-            .cloned()
-    }
-
-    /// Reserves the provided number of blocks, starting from the next block
-    /// number.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    pub fn reserve_blocks(
-        &mut self,
-        additional: NonZeroU64,
-        interval: u64,
-        previous_base_fee: Option<U256>,
-        previous_state_root: B256,
-        previous_total_difficulty: U256,
-        spec_id: SpecId,
-    ) {
-        let reservation = Reservation {
-            first_number: self.last_block_number + 1,
-            last_number: self.last_block_number + additional.get(),
-            interval,
-            previous_base_fee_per_gas: previous_base_fee,
-            previous_state_root,
-            previous_total_difficulty,
-            previous_diff_index: self.state_diffs.len() - 1,
-            spec_id,
-        };
-
-        self.reservations.get_mut().push(reservation);
-        self.last_block_number += additional.get();
     }
 
     /// Reverts to the block with the provided number, deleting all later
@@ -223,6 +148,115 @@ where
 
         true
     }
+}
+
+impl<
+        BlockReceiptT: ExecutionReceipt<Log = FilterLog> + ReceiptTrait,
+        BlockT: BlockReceipts<BlockReceiptT>,
+        HardforkT: HardforkTrait,
+        SignedTransactionT,
+    > ReservableSparseBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
+{
+    /// Retrieves the logs that match the provided filter.
+    pub fn logs(
+        &self,
+        from_block: u64,
+        to_block: u64,
+        addresses: &HashSet<Address>,
+        normalized_topics: &[Option<Vec<B256>>],
+    ) -> Result<Vec<edr_eth::log::FilterLog>, BlockT::Error> {
+        let storage = self.storage.read();
+        sparse::logs(&storage, from_block, to_block, addresses, normalized_topics)
+    }
+}
+
+impl<
+        BlockReceiptT: Clone + ReceiptTrait,
+        BlockT: Clone,
+        HardforkT: HardforkTrait,
+        SignedTransactionT,
+    > ReservableSparseBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
+{
+    /// Retrieves the block by hash, if it exists.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+    pub fn block_by_hash(&self, hash: &B256) -> Option<BlockT> {
+        self.storage.read().block_by_hash(hash).cloned()
+    }
+
+    /// Retrieves the block that contains the transaction with the provided
+    /// hash, if it exists.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+    pub fn block_by_transaction_hash(&self, transaction_hash: &B256) -> Option<BlockT> {
+        self.storage
+            .read()
+            .block_by_transaction_hash(transaction_hash)
+            .cloned()
+    }
+
+    /// Retrieves whether a block with the provided number exists.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+    pub fn contains_block_number(&self, number: u64) -> bool {
+        self.storage.read().contains_block_number(number)
+    }
+
+    /// Retrieves the last block number.
+    pub fn last_block_number(&self) -> u64 {
+        self.last_block_number
+    }
+
+    /// Retrieves the sequence of diffs from the genesis state to the state of
+    /// the block with the provided number, if it exists.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+    pub fn state_diffs_until_block(&self, block_number: u64) -> Option<&[(u64, StateDiff)]> {
+        let diff_index = self
+            .number_to_diff_index
+            .get(&block_number)
+            .copied()
+            .or_else(|| {
+                let reservations = self.reservations.read();
+                find_reservation(&reservations, block_number)
+                    .map(|reservation| reservation.previous_diff_index)
+            })?;
+
+        Some(&self.state_diffs[0..=diff_index])
+    }
+
+    /// Retrieves the receipt of the transaction with the provided hash, if it
+    /// exists.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+    pub fn receipt_by_transaction_hash(&self, transaction_hash: &B256) -> Option<BlockReceiptT> {
+        self.storage
+            .read()
+            .receipt_by_transaction_hash(transaction_hash)
+            .cloned()
+    }
+
+    /// Reserves the provided number of blocks, starting from the next block
+    /// number.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+    pub fn reserve_blocks(
+        &mut self,
+        additional: NonZeroU64,
+        interval: u64,
+        previous_base_fee: Option<U256>,
+        previous_state_root: B256,
+        previous_total_difficulty: U256,
+        hardfork: HardforkT,
+    ) {
+        let reservation = Reservation {
+            first_number: self.last_block_number + 1,
+            last_number: self.last_block_number + additional.get(),
+            interval,
+            previous_base_fee_per_gas: previous_base_fee,
+            previous_state_root,
+            previous_total_difficulty,
+            previous_diff_index: self.state_diffs.len() - 1,
+            hardfork,
+        };
+
+        self.reservations.get_mut().push(reservation);
+        self.last_block_number += additional.get();
+    }
 
     /// Retrieves the total difficulty of the block with the provided hash.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -231,10 +265,12 @@ where
     }
 }
 
-impl<BlockT, ChainSpecT> ReservableSparseBlockchainStorage<BlockT, ChainSpecT>
-where
-    BlockT: Block<ChainSpecT> + Clone + From<LocalBlock<ChainSpecT>>,
-    ChainSpecT: ChainSpec,
+impl<
+        BlockReceiptT: Clone + ReceiptTrait,
+        BlockT: Block<SignedTransactionT> + Clone + EmptyBlock<HardforkT> + LocalBlock<BlockReceiptT>,
+        HardforkT: HardforkTrait,
+        SignedTransactionT: ExecutableTransaction,
+    > ReservableSparseBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
 {
     /// Retrieves the block by number, if it exists.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -249,7 +285,7 @@ where
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
     pub fn insert_block(
         &mut self,
-        block: LocalBlock<ChainSpecT>,
+        block: BlockT,
         state_diff: StateDiff,
         total_difficulty: U256,
     ) -> Result<&BlockT, InsertError> {
@@ -260,8 +296,6 @@ where
         self.state_diffs.push((self.last_block_number, state_diff));
 
         let receipts: Vec<_> = block.transaction_receipts().to_vec();
-        let block = BlockT::from(block);
-
         self.storage.get_mut().insert_receipts(receipts)?;
 
         self.storage.get_mut().insert_block(block, total_difficulty)
@@ -311,8 +345,8 @@ where
                     block_number,
                 );
 
-                let block = LocalBlock::empty(
-                    reservation.spec_id,
+                let block = BlockT::empty(
+                    reservation.hardfork,
                     PartialHeader {
                         number: block_number,
                         state_root: reservation.previous_state_root,
@@ -325,7 +359,7 @@ where
                 {
                     let mut storage = RwLockUpgradableReadGuard::upgrade(storage);
                     Ok(storage
-                        .insert_block(block.into(), reservation.previous_total_difficulty)?
+                        .insert_block(block, reservation.previous_total_difficulty)?
                         .clone())
                 }
             })
@@ -334,16 +368,17 @@ where
 }
 
 #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-fn calculate_timestamp_for_reserved_block<BlockT, ChainSpecT>(
-    storage: &SparseBlockchainStorage<BlockT, ChainSpecT>,
-    reservations: &Vec<Reservation>,
-    reservation: &Reservation,
+fn calculate_timestamp_for_reserved_block<
+    BlockReceiptT: ReceiptTrait,
+    BlockT: Block<SignedTransactionT>,
+    HardforkT: HardforkTrait,
+    SignedTransactionT,
+>(
+    storage: &SparseBlockchainStorage<BlockReceiptT, BlockT, SignedTransactionT>,
+    reservations: &Vec<Reservation<HardforkT>>,
+    reservation: &Reservation<HardforkT>,
     block_number: u64,
-) -> u64
-where
-    BlockT: Block<ChainSpecT> + Clone,
-    ChainSpecT: ChainSpec,
-{
+) -> u64 {
     let previous_block_number = reservation.first_number - 1;
     let previous_timestamp =
         if let Some(previous_reservation) = find_reservation(reservations, previous_block_number) {
@@ -364,7 +399,10 @@ where
     previous_timestamp + reservation.interval * (block_number - reservation.first_number + 1)
 }
 
-fn find_reservation(reservations: &[Reservation], number: u64) -> Option<&Reservation> {
+fn find_reservation<HardforkT: HardforkTrait>(
+    reservations: &[Reservation<HardforkT>],
+    number: u64,
+) -> Option<&Reservation<HardforkT>> {
     reservations
         .iter()
         .find(|reservation| reservation.first_number <= number && number <= reservation.last_number)

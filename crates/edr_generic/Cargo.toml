@@ -1,0 +1,37 @@
+[package]
+name = "edr_generic"
+version = "0.3.5"
+edition = "2021"
+description = "A generic chain specification for Ethereum Layer 1 chains."
+
+[dependencies]
+alloy-rlp = { version = "0.3", default-features = false, features = ["derive"] }
+derive-where = { version = "1.2.7", default-features = false }
+edr_eth = { path = "../edr_eth" }
+edr_evm = { path = "../edr_evm" }
+edr_provider = { path = "../edr_provider" }
+edr_rpc_eth = { path = "../edr_rpc_eth" }
+edr_solidity = { path = "../edr_solidity" }
+log = { version = "0.4.17", default-features = false }
+serde = { version = "1.0.209", default-features = false, features = ["derive"] }
+thiserror = { version = "1.0.37", default-features = false }
+
+[dev-dependencies]
+anyhow = "1.0.89"
+edr_defaults = { path = "../edr_defaults" }
+edr_evm = { path = "../edr_evm", features = ["test-utils"] }
+edr_provider = { path = "../edr_provider", features = ["test-utils"] }
+edr_rpc_eth = { path = "../edr_rpc_eth", features = ["test-utils"] }
+edr_rpc_client = { path = "../edr_rpc_client" }
+edr_test_utils = { path = "../edr_test_utils" }
+parking_lot = { version = "0.12.1", default-features = false }
+paste = { version = "1.0.14", default-features = false }
+serde_json = { version = "1.0.127" }
+serial_test = "2.0.0"
+tokio = { version = "1.21.2", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+
+[features]
+test-remote = []
+
+[lints]
+workspace = true

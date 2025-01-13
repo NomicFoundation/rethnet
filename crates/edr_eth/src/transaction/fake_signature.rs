@@ -4,6 +4,8 @@ pub(super) mod tests {
         () => {
             #[test]
             fn hash_with_fake_signature_same_sender() {
+                use $crate::transaction::ExecutableTransaction as _;
+
                 let transaction_request = dummy_request();
 
                 let sender = Address::from(revm_primitives::ruint::aliases::U160::from(1));
@@ -11,14 +13,16 @@ pub(super) mod tests {
                 let signed_transaction_one = transaction_request.clone().fake_sign(sender);
                 let signed_transaction_two = transaction_request.fake_sign(sender);
 
-                let hash_one = signed_transaction_one.hash();
-                let hash_two = signed_transaction_two.hash();
+                let hash_one = signed_transaction_one.transaction_hash();
+                let hash_two = signed_transaction_two.transaction_hash();
 
                 assert_eq!(hash_one, hash_two);
             }
 
             #[test]
             fn hash_with_fake_signature_different_senders() {
+                use $crate::transaction::ExecutableTransaction as _;
+
                 let transaction_request = dummy_request();
 
                 let sender_one = Address::from(revm_primitives::ruint::aliases::U160::from(1));
@@ -27,14 +31,16 @@ pub(super) mod tests {
                 let signed_transaction_one = transaction_request.clone().fake_sign(sender_one);
                 let signed_transaction_two = transaction_request.fake_sign(sender_two);
 
-                let hash_one = signed_transaction_one.hash();
-                let hash_two = signed_transaction_two.hash();
+                let hash_one = signed_transaction_one.transaction_hash();
+                let hash_two = signed_transaction_two.transaction_hash();
 
                 assert_ne!(hash_one, hash_two);
             }
 
             #[test]
             fn recovers_fake_sender() {
+                use $crate::transaction::Transaction as _;
+
                 let transaction_request = dummy_request();
 
                 // Fails to recover with signature error if tried to ecrocver a fake signature

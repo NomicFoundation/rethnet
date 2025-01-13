@@ -9,6 +9,7 @@ members = [
     "crates/edr_rpc_eth",
     "crates/edr_solidity",
     "crates/edr_test_utils",
+    "crates/edr_utils",
     "crates/tools",
 ]
 resolver = "2"
@@ -25,7 +26,7 @@ nonstandard_style = "warn"
 rust_2018_idioms = "warn"
 
 [workspace.lints.clippy]
-all = "warn"
+all = { level = "warn", priority = -1 }
 await_holding_lock = "warn"
 bool-to-int-with-if = "warn"
 cast_lossless = "warn"

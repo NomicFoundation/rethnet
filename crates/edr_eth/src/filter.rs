@@ -157,7 +157,7 @@ impl<'a> serde::Deserialize<'a> for SubscriptionType {
         D: serde::Deserializer<'a>,
     {
         struct SubscriptionTypeVisitor;
-        impl<'a> serde::de::Visitor<'a> for SubscriptionTypeVisitor {
+        impl serde::de::Visitor<'_> for SubscriptionTypeVisitor {
             type Value = SubscriptionType;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

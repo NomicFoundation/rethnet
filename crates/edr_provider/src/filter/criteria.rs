@@ -1,9 +1,8 @@
 use edr_eth::{
     filter::LogOutput,
     log::{matches_address_filter, matches_topics_filter, FilterLog},
-    Address, Bloom, BloomInput, B256,
+    Address, Bloom, BloomInput, HashSet, B256,
 };
-use edr_evm::HashSet;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogFilter {

@@ -1,13 +1,13 @@
 use std::{fmt::Debug, path::PathBuf};
 
+use derive_where::derive_where;
 use edr_eth::{
-    account::KECCAK_EMPTY,
+    account::{AccountInfo, KECCAK_EMPTY},
     fee_history::FeeHistoryResult,
     filter::{LogFilterOptions, OneOrMore},
     log::FilterLog,
-    receipt::BlockReceipt,
     reward_percentile::RewardPercentile,
-    AccountInfo, Address, BlockSpec, Bytecode, Bytes, PreEip1898BlockSpec, B256, U256, U64,
+    Address, BlockSpec, Bytecode, Bytes, PreEip1898BlockSpec, B256, U256, U64,
 };
 use edr_rpc_client::RpcClient;
 pub use edr_rpc_client::{header, HeaderMap, RpcClientError};
@@ -23,15 +23,10 @@ use crate::{
 // thundering herd during backoff.
 const MAX_PARALLEL_REQUESTS: usize = 20;
 
-// where
-//     RpcSpecT::Block<B256>: Send + Sync,
-//     RpcSpecT::Block<RpcSpecT::Transaction>: Send + Sync,
-//     RpcSpecT::Transaction: Send + Sync,
-
-#[derive(Debug)]
+#[derive_where(Debug)]
 pub struct EthRpcClient<RpcSpecT: RpcSpec> {
     inner: RpcClient<RequestMethod>,
-    _phantom: std::marker::PhantomData<RpcSpecT>,
+    phantom: std::marker::PhantomData<RpcSpecT>,
 }
 
 impl<RpcSpecT: RpcSpec> EthRpcClient<RpcSpecT> {
@@ -47,7 +42,7 @@ impl<RpcSpecT: RpcSpec> EthRpcClient<RpcSpecT> {
         let inner = RpcClient::new(url, cache_dir, extra_headers)?;
         Ok(Self {
             inner,
-            _phantom: std::marker::PhantomData,
+            phantom: std::marker::PhantomData,
         })
     }
 
@@ -265,7 +260,7 @@ impl<RpcSpecT: RpcSpec> EthRpcClient<RpcSpecT> {
     pub async fn get_transaction_receipt(
         &self,
         tx_hash: B256,
-    ) -> Result<Option<BlockReceipt>, RpcClientError> {
+    ) -> Result<Option<RpcSpecT::RpcReceipt>, RpcClientError> {
         self.inner
             .call(RequestMethod::GetTransactionReceipt(tx_hash))
             .await
@@ -277,7 +272,7 @@ impl<RpcSpecT: RpcSpec> EthRpcClient<RpcSpecT> {
     pub async fn get_transaction_receipts(
         &self,
         hashes: impl IntoIterator<Item = &B256> + Debug,
-    ) -> Result<Option<Vec<BlockReceipt>>, RpcClientError> {
+    ) -> Result<Option<Vec<RpcSpecT::RpcReceipt>>, RpcClientError> {
         let requests = hashes
             .into_iter()
             .map(|transaction_hash| self.get_transaction_receipt(*transaction_hash))
@@ -285,7 +280,7 @@ impl<RpcSpecT: RpcSpec> EthRpcClient<RpcSpecT> {
 
         futures::stream::iter(requests)
             .buffered(MAX_PARALLEL_REQUESTS)
-            .collect::<Vec<Result<Option<BlockReceipt>, RpcClientError>>>()
+            .collect::<Vec<Result<Option<RpcSpecT::RpcReceipt>, RpcClientError>>>()
             .await
             .into_iter()
             .collect()
@@ -327,14 +322,14 @@ impl<RpcSpecT: RpcSpec> EthRpcClient<RpcSpecT> {
 mod tests {
     use std::{ops::Deref, str::FromStr};
 
+    use edr_eth::l1::L1ChainSpec;
     use reqwest::StatusCode;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::spec::EthRpcSpec;
 
     struct TestRpcClient {
-        client: EthRpcClient<EthRpcSpec>,
+        client: EthRpcClient<L1ChainSpec>,
 
         // Need to keep the tempdir around to prevent it from being deleted
         // Only accessed when feature = "test-remote", hence the allow.
@@ -353,7 +348,7 @@ mod tests {
     }
 
     impl Deref for TestRpcClient {
-        type Target = EthRpcClient<EthRpcSpec>;
+        type Target = EthRpcClient<L1ChainSpec>;
 
         fn deref(&self) -> &Self::Target {
             &self.client
@@ -712,7 +707,7 @@ mod tests {
             );
             assert_eq!(
                 tx.block_number,
-                Some(U256::from_str_radix("a74fde", 16).expect("couldn't parse data"))
+                Some(u64::from_str_radix("a74fde", 16).expect("couldn't parse data"))
             );
             assert_eq!(tx.hash, hash);
             assert_eq!(
@@ -835,7 +830,7 @@ mod tests {
             );
             assert_eq!(receipt.block_number, 0xa74fde);
             assert_eq!(receipt.contract_address, None);
-            assert_eq!(receipt.cumulative_gas_used(), 0x56c81b);
+            assert_eq!(receipt.cumulative_gas_used, 0x56c81b);
             assert_eq!(
                 receipt.effective_gas_price,
                 Some(U256::from_str_radix("1e449a99b8", 16).expect("couldn't parse data"))
@@ -849,9 +844,9 @@ mod tests {
                 receipt.gas_used,
                 u64::from_str_radix("a0f9", 16).expect("couldn't parse data")
             );
-            assert_eq!(receipt.logs().len(), 1);
-            assert_eq!(receipt.state_root(), None);
-            assert_eq!(receipt.status_code(), Some(1));
+            assert_eq!(receipt.logs.len(), 1);
+            assert_eq!(receipt.state_root, None);
+            assert_eq!(receipt.status, Some(true));
             assert_eq!(
                 receipt.to,
                 Some(
@@ -861,7 +856,7 @@ mod tests {
             );
             assert_eq!(receipt.transaction_hash, hash);
             assert_eq!(receipt.transaction_index, 136);
-            assert_eq!(receipt.transaction_type(), 0);
+            assert_eq!(receipt.transaction_type, Some(0));
         }
 
         #[tokio::test]

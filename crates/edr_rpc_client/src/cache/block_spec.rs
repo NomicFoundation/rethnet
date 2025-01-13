@@ -25,7 +25,7 @@ pub enum CacheableBlockSpec<'a> {
     Finalized,
 }
 
-impl<'a> CacheKeyVariant for CacheableBlockSpec<'a> {
+impl CacheKeyVariant for CacheableBlockSpec<'_> {
     fn cache_key_variant(&self) -> u8 {
         match self {
             CacheableBlockSpec::Number { .. } => 0,

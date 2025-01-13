@@ -1,0 +1,37 @@
+[package]
+name = "edr_optimism"
+version = "0.3.5"
+edition = "2021"
+
+[dependencies]
+alloy-rlp = { version = "0.3", default-features = false, features = ["derive"] }
+alloy-serde = { version = "0.3.5", default-features = false, features = ["std"] }
+edr_eth = { path = "../edr_eth", features = ["serde", "std"] }
+edr_evm = { path = "../edr_evm" }
+edr_generic = { path = "../edr_generic" }
+edr_napi_core = { path = "../edr_napi_core" }
+edr_provider = { path = "../edr_provider" }
+edr_rpc_eth = { path = "../edr_rpc_eth" }
+edr_solidity = { path = "../edr_solidity" }
+log = { version = "0.4.17", default-features = false }
+op-alloy-rpc-types = { version = "0.2.11", default-features = false }
+revm-optimism = { git = "https://github.com/nomicfoundation/revm", rev = "4722477", version = "1.0", default-features = false, features = ["c-kzg", "dev", "serde", "std"] }
+serde = { version = "1.0.209", default-features = false, features = ["derive", "std"] }
+thiserror = { version = "1.0.37", default-features = false }
+tokio = { version = "1.21.2", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+anyhow = "1.0.89"
+edr_defaults = { path = "../edr_defaults" }
+edr_evm = { path = "../edr_evm", features = ["test-utils"] }
+edr_provider = { path = "../edr_provider", features = ["test-utils"] }
+edr_rpc_eth = { path = "../edr_rpc_eth", features = ["test-utils"] }
+edr_test_utils = { path = "../edr_test_utils" }
+parking_lot = { version = "0.12.1", default-features = false }
+paste = { version = "1.0.14", default-features = false }
+serde_json = { version = "1.0.127" }
+serial_test = "2.0.0"
+tokio = { version = "1.21.2", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+
+[features]
+test-remote = []

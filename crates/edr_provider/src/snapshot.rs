@@ -1,18 +1,18 @@
 use std::time::Instant;
 
 use edr_eth::{Address, U256};
-use edr_evm::{state::IrregularState, MemPool, RandomHashGenerator};
+use edr_evm::{spec::RuntimeSpec, state::IrregularState, MemPool, RandomHashGenerator};
 use rpds::HashTrieMapSync;
 
 use crate::data::StateId;
 
-pub(crate) struct Snapshot {
+pub(crate) struct Snapshot<ChainSpecT: RuntimeSpec> {
     pub block_number: u64,
     pub block_number_to_state_id: HashTrieMapSync<u64, StateId>,
     pub block_time_offset_seconds: i64,
     pub coinbase: Address,
     pub irregular_state: IrregularState,
-    pub mem_pool: MemPool,
+    pub mem_pool: MemPool<ChainSpecT>,
     pub next_block_base_fee_per_gas: Option<U256>,
     pub next_block_timestamp: Option<u64>,
     pub parent_beacon_block_root_generator: RandomHashGenerator,

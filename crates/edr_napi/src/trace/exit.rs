@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use edr_evm::HaltReason;
+use edr_eth::result::HaltReason;
 use napi_derive::napi;
 
 #[napi]
@@ -51,8 +51,8 @@ impl fmt::Display for ExitCode {
 }
 
 #[allow(clippy::fallible_impl_from)] // naively ported for now
-impl From<edr_solidity::exit_code::ExitCode> for ExitCode {
-    fn from(code: edr_solidity::exit_code::ExitCode) -> Self {
+impl From<edr_solidity::exit_code::ExitCode<edr_eth::result::HaltReason>> for ExitCode {
+    fn from(code: edr_solidity::exit_code::ExitCode<edr_eth::result::HaltReason>) -> Self {
         use edr_solidity::exit_code::ExitCode;
 
         match code {

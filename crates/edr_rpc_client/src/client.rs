@@ -92,7 +92,7 @@ pub enum RpcClientError {
     #[error("{error}. Request: {request}")]
     JsonRpcError {
         /// The JSON-RPC error
-        error: jsonrpc::Error,
+        error: Box<jsonrpc::Error>,
         /// The request JSON
         request: String,
     },
@@ -239,7 +239,7 @@ impl<MethodT: RpcMethod + Serialize> RpcClient<MethodT> {
         };
 
         result.map_err(|error| RpcClientError::JsonRpcError {
-            error,
+            error: Box::new(error),
             request: request.to_json_string(),
         })
     }
@@ -708,7 +708,7 @@ mod tests {
         NetVersion,
     }
 
-    impl<'method> CachedTestMethod<'method> {
+    impl CachedTestMethod<'_> {
         fn key_hasher(&self) -> Result<cache::KeyHasher, UnresolvedBlockTagError> {
             let hasher = KeyHasher::default().hash_u8(self.cache_key_variant());
 
@@ -770,7 +770,7 @@ mod tests {
         }
     }
 
-    impl<'method> CacheKeyVariant for CachedTestMethod<'method> {
+    impl CacheKeyVariant for CachedTestMethod<'_> {
         fn cache_key_variant(&self) -> u8 {
             match self {
                 Self::GetBlockByNumber { .. } => 0,
@@ -779,7 +779,7 @@ mod tests {
         }
     }
 
-    impl<'method> CacheableMethod for CachedTestMethod<'method> {
+    impl CacheableMethod for CachedTestMethod<'_> {
         type MethodWithResolvableBlockTag = TestMethodWithResolvableBlockSpec;
 
         fn resolve_block_tag(

@@ -7,7 +7,7 @@ pub trait EthRpcTransaction {
     fn block_hash(&self) -> Option<&B256>;
 }
 
-impl EthRpcTransaction for edr_rpc_eth::Transaction {
+impl EthRpcTransaction for edr_rpc_eth::TransactionWithSignature {
     fn block_hash(&self) -> Option<&B256> {
         self.block_hash.as_ref()
     }

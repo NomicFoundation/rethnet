@@ -1,19 +1,20 @@
-use std::fmt::Debug;
-
 use edr_solidity::{
     artifacts::{CompilerInput, CompilerOutput},
     compiler::create_models_and_decode_bytecodes,
 };
 
-use crate::{data::ProviderData, time::TimeSinceEpoch, ProviderError};
+use crate::{data::ProviderData, time::TimeSinceEpoch, ProviderError, ProviderSpec};
 
-pub fn handle_add_compilation_result<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
-    data: &mut ProviderData<LoggerErrorT, TimerT>,
+pub fn handle_add_compilation_result<
+    ChainSpecT: ProviderSpec<TimerT>,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &mut ProviderData<ChainSpecT, TimerT>,
     solc_version: String,
     compiler_input: CompilerInput,
     compiler_output: CompilerOutput,
-) -> Result<bool, ProviderError<LoggerErrorT>> {
-    if let Err(error) = add_compilation_result_inner::<LoggerErrorT, TimerT>(
+) -> Result<bool, ProviderError<ChainSpecT>> {
+    if let Err(error) = add_compilation_result_inner::<ChainSpecT, TimerT>(
         data,
         solc_version,
         compiler_input,
@@ -28,12 +29,15 @@ pub fn handle_add_compilation_result<LoggerErrorT: Debug, TimerT: Clone + TimeSi
     }
 }
 
-fn add_compilation_result_inner<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
-    data: &mut ProviderData<LoggerErrorT, TimerT>,
+fn add_compilation_result_inner<
+    ChainSpecT: ProviderSpec<TimerT>,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &mut ProviderData<ChainSpecT, TimerT>,
     solc_version: String,
     compiler_input: CompilerInput,
     compiler_output: CompilerOutput,
-) -> Result<(), ProviderError<LoggerErrorT>> {
+) -> Result<(), ProviderError<ChainSpecT>> {
     let contracts =
         create_models_and_decode_bytecodes(solc_version, &compiler_input, &compiler_output)
             .map_err(|err| ProviderError::SolcDecoding(err.to_string()))?;

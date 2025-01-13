@@ -2,35 +2,43 @@ use core::fmt::Debug;
 use std::sync::Arc;
 
 use edr_eth::{
-    transaction::Transaction as _, BlockSpec, PreEip1898BlockSpec, SpecId, B256, U256, U64,
+    result::InvalidTransaction,
+    transaction::{ExecutableTransaction as _, TransactionValidation},
+    BlockSpec, PreEip1898BlockSpec, B256, U256, U64,
 };
-use edr_evm::{blockchain::BlockchainError, chain_spec::L1ChainSpec, SyncBlock};
+use edr_evm::{
+    block::transaction::{BlockDataForTransaction, TransactionAndBlock},
+    spec::RuntimeSpec,
+    Block as _,
+};
+use edr_rpc_eth::RpcTypeFrom as _;
 
 use crate::{
-    data::{BlockDataForTransaction, ProviderData, TransactionAndBlock},
-    requests::{eth::transaction_to_rpc_result, validation::validate_post_merge_block_tags},
-    time::TimeSinceEpoch,
-    ProviderError,
+    data::ProviderData, requests::validation::validate_post_merge_block_tags,
+    spec::SyncProviderSpec, time::TimeSinceEpoch, ProviderError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
-pub enum HashOrTransaction {
+pub enum HashOrTransaction<ChainSpecT: RuntimeSpec> {
     Hash(B256),
-    Transaction(edr_rpc_eth::Transaction),
+    Transaction(ChainSpecT::RpcTransaction),
 }
 
-pub fn handle_get_block_by_hash_request<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
-    data: &ProviderData<LoggerErrorT, TimerT>,
+pub fn handle_get_block_by_hash_request<
+    ChainSpecT: SyncProviderSpec<TimerT>,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &ProviderData<ChainSpecT, TimerT>,
     block_hash: B256,
     transaction_detail_flag: bool,
-) -> Result<Option<edr_rpc_eth::Block<HashOrTransaction>>, ProviderError<LoggerErrorT>> {
+) -> Result<Option<edr_rpc_eth::Block<HashOrTransaction<ChainSpecT>>>, ProviderError<ChainSpecT>> {
     data.block_by_hash(&block_hash)?
         .map(|block| {
-            let total_difficulty = data.total_difficulty_by_hash(block.hash())?;
+            let total_difficulty = data.total_difficulty_by_hash(block.block_hash())?;
             let pending = false;
             block_to_rpc_output(
-                data.spec_id(),
+                data.hardfork(),
                 block,
                 pending,
                 total_difficulty,
@@ -40,11 +48,21 @@ pub fn handle_get_block_by_hash_request<LoggerErrorT: Debug, TimerT: Clone + Tim
         .transpose()
 }
 
-pub fn handle_get_block_by_number_request<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
-    data: &mut ProviderData<LoggerErrorT, TimerT>,
+pub fn handle_get_block_by_number_request<
+    ChainSpecT: SyncProviderSpec<
+        TimerT,
+        BlockEnv: Default,
+        SignedTransaction: Default
+                               + TransactionValidation<
+            ValidationError: From<InvalidTransaction> + PartialEq,
+        >,
+    >,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &mut ProviderData<ChainSpecT, TimerT>,
     block_spec: PreEip1898BlockSpec,
     transaction_detail_flag: bool,
-) -> Result<Option<edr_rpc_eth::Block<HashOrTransaction>>, ProviderError<LoggerErrorT>> {
+) -> Result<Option<edr_rpc_eth::Block<HashOrTransaction<ChainSpecT>>>, ProviderError<ChainSpecT>> {
     block_by_number(data, &block_spec.into())?
         .map(
             |BlockByNumberResult {
@@ -53,7 +71,7 @@ pub fn handle_get_block_by_number_request<LoggerErrorT: Debug, TimerT: Clone + T
                  total_difficulty,
              }| {
                 block_to_rpc_output(
-                    data.spec_id(),
+                    data.hardfork(),
                     block,
                     pending,
                     total_difficulty,
@@ -65,48 +83,69 @@ pub fn handle_get_block_by_number_request<LoggerErrorT: Debug, TimerT: Clone + T
 }
 
 pub fn handle_get_block_transaction_count_by_hash_request<
-    LoggerErrorT: Debug,
+    ChainSpecT: SyncProviderSpec<TimerT>,
     TimerT: Clone + TimeSinceEpoch,
 >(
-    data: &ProviderData<LoggerErrorT, TimerT>,
+    data: &ProviderData<ChainSpecT, TimerT>,
     block_hash: B256,
-) -> Result<Option<U64>, ProviderError<LoggerErrorT>> {
+) -> Result<Option<U64>, ProviderError<ChainSpecT>> {
     Ok(data
         .block_by_hash(&block_hash)?
         .map(|block| U64::from(block.transactions().len())))
 }
 
 pub fn handle_get_block_transaction_count_by_block_number<
-    LoggerErrorT: Debug,
+    ChainSpecT: SyncProviderSpec<
+        TimerT,
+        BlockEnv: Default,
+        SignedTransaction: Default
+                               + TransactionValidation<
+            ValidationError: From<InvalidTransaction> + PartialEq,
+        >,
+    >,
     TimerT: Clone + TimeSinceEpoch,
 >(
-    data: &mut ProviderData<LoggerErrorT, TimerT>,
+    data: &mut ProviderData<ChainSpecT, TimerT>,
     block_spec: PreEip1898BlockSpec,
-) -> Result<Option<U64>, ProviderError<LoggerErrorT>> {
+) -> Result<Option<U64>, ProviderError<ChainSpecT>> {
     Ok(block_by_number(data, &block_spec.into())?
         .map(|BlockByNumberResult { block, .. }| U64::from(block.transactions().len())))
 }
 
+/// Helper type for a chain-specific [`BlockByNumberResult`].
+type BlockByNumberResultForChainSpec<ChainSpecT> =
+    BlockByNumberResult<Arc<<ChainSpecT as RuntimeSpec>::Block>>;
+
 /// The result returned by requesting a block by number.
-#[derive(Debug, Clone)]
-struct BlockByNumberResult {
+#[derive(Clone, Debug)]
+struct BlockByNumberResult<BlockT> {
     /// The block
-    pub block: Arc<dyn SyncBlock<L1ChainSpec, Error = BlockchainError>>,
+    pub block: BlockT,
     /// Whether the block is a pending block.
     pub pending: bool,
     /// The total difficulty with the block
     pub total_difficulty: Option<U256>,
 }
 
-fn block_by_number<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
-    data: &mut ProviderData<LoggerErrorT, TimerT>,
+fn block_by_number<
+    ChainSpecT: SyncProviderSpec<
+        TimerT,
+        BlockEnv: Default,
+        SignedTransaction: Default
+                               + TransactionValidation<
+            ValidationError: From<InvalidTransaction> + PartialEq,
+        >,
+    >,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &mut ProviderData<ChainSpecT, TimerT>,
     block_spec: &BlockSpec,
-) -> Result<Option<BlockByNumberResult>, ProviderError<LoggerErrorT>> {
-    validate_post_merge_block_tags(data.spec_id(), block_spec)?;
+) -> Result<Option<BlockByNumberResultForChainSpec<ChainSpecT>>, ProviderError<ChainSpecT>> {
+    validate_post_merge_block_tags(data.hardfork(), block_spec)?;
 
     match data.block_by_block_spec(block_spec) {
         Ok(Some(block)) => {
-            let total_difficulty = data.total_difficulty_by_hash(block.hash())?;
+            let total_difficulty = data.total_difficulty_by_hash(block.block_hash())?;
             Ok(Some(BlockByNumberResult {
                 block,
                 pending: false,
@@ -116,17 +155,16 @@ fn block_by_number<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
         // Pending block
         Ok(None) => {
             let result = data.mine_pending_block()?;
-            let block: Arc<dyn SyncBlock<L1ChainSpec, Error = BlockchainError>> =
-                Arc::new(result.block);
+            let pending_block = Arc::new(result.block);
 
             let last_block = data.last_block()?;
             let previous_total_difficulty = data
-                .total_difficulty_by_hash(last_block.hash())?
+                .total_difficulty_by_hash(last_block.block_hash())?
                 .expect("last block has total difficulty");
-            let total_difficulty = previous_total_difficulty + block.header().difficulty;
+            let total_difficulty = previous_total_difficulty + pending_block.header().difficulty;
 
             Ok(Some(BlockByNumberResult {
-                block,
+                block: ChainSpecT::cast_local_block(pending_block),
                 pending: true,
                 total_difficulty: Some(total_difficulty),
             }))
@@ -136,16 +174,16 @@ fn block_by_number<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
     }
 }
 
-fn block_to_rpc_output<LoggerErrorT: Debug>(
-    spec_id: SpecId,
-    block: Arc<dyn SyncBlock<L1ChainSpec, Error = BlockchainError>>,
-    pending: bool,
+fn block_to_rpc_output<ChainSpecT: RuntimeSpec>(
+    hardfork: ChainSpecT::Hardfork,
+    block: Arc<ChainSpecT::Block>,
+    is_pending: bool,
     total_difficulty: Option<U256>,
     transaction_detail_flag: bool,
-) -> Result<edr_rpc_eth::Block<HashOrTransaction>, ProviderError<LoggerErrorT>> {
+) -> Result<edr_rpc_eth::Block<HashOrTransaction<ChainSpecT>>, ProviderError<ChainSpecT>> {
     let header = block.header();
 
-    let transactions: Vec<HashOrTransaction> = if transaction_detail_flag {
+    let transactions: Vec<HashOrTransaction<ChainSpecT>> = if transaction_detail_flag {
         block
             .transactions()
             .iter()
@@ -156,10 +194,18 @@ fn block_to_rpc_output<LoggerErrorT: Debug>(
                     block: block.clone(),
                     transaction_index: i.try_into().expect("usize fits into u64"),
                 }),
-                is_pending: false,
+                is_pending,
             })
-            .map(|tx| transaction_to_rpc_result(tx, spec_id).map(HashOrTransaction::Transaction))
-            .collect::<Result<_, _>>()?
+            .map(
+                |transaction_and_block: TransactionAndBlock<
+                    Arc<ChainSpecT::Block>,
+                    ChainSpecT::SignedTransaction,
+                >| {
+                    ChainSpecT::RpcTransaction::rpc_type_from(&transaction_and_block, hardfork)
+                },
+            )
+            .map(HashOrTransaction::Transaction)
+            .collect()
     } else {
         block
             .transactions()
@@ -168,12 +214,20 @@ fn block_to_rpc_output<LoggerErrorT: Debug>(
             .collect()
     };
 
-    let mix_hash = if pending { None } else { Some(header.mix_hash) };
-    let nonce = if pending { None } else { Some(header.nonce) };
-    let number = if pending { None } else { Some(header.number) };
+    let mix_hash = if is_pending {
+        None
+    } else {
+        Some(header.mix_hash)
+    };
+    let nonce = if is_pending { None } else { Some(header.nonce) };
+    let number = if is_pending {
+        None
+    } else {
+        Some(header.number)
+    };
 
     Ok(edr_rpc_eth::Block {
-        hash: Some(*block.hash()),
+        hash: Some(*block.block_hash()),
         parent_hash: header.parent_hash,
         sha3_uncles: header.ommers_hash,
         state_root: header.state_root,

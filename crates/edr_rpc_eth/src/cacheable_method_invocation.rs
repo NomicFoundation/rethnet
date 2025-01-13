@@ -71,7 +71,7 @@ pub enum CachedRequestMethod<'a> {
     NetVersion,
 }
 
-impl<'a> CachedRequestMethod<'a> {
+impl CachedRequestMethod<'_> {
     // Allow to keep same structure as other RequestMethod and other methods.
     #[allow(clippy::match_same_arms)]
     fn key_hasher(&self) -> Result<cache::KeyHasher, UnresolvedBlockTagError> {
@@ -266,7 +266,7 @@ impl RpcMethod for RequestMethod {
     }
 }
 
-impl<'method> CacheableMethod for CachedRequestMethod<'method> {
+impl CacheableMethod for CachedRequestMethod<'_> {
     type MethodWithResolvableBlockTag = MethodWithResolvableBlockSpec;
 
     fn resolve_block_tag(method: Self::MethodWithResolvableBlockTag, block_number: u64) -> Self {
@@ -337,7 +337,7 @@ impl<'method> CacheableMethod for CachedRequestMethod<'method> {
     }
 }
 
-impl<'a> CacheKeyVariant for CachedRequestMethod<'a> {
+impl CacheKeyVariant for CachedRequestMethod<'_> {
     fn cache_key_variant(&self) -> u8 {
         match self {
             // The commented out methods have been removed as they're not currently in use by the

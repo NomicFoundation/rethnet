@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use alloy_rlp::BufMut;
 
-use crate::log::FullBlockLog;
+use crate::log::{ExecutionLog, FullBlockLog};
 
 /// A log that's returned through a filter query.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +24,12 @@ impl Deref for FilterLog {
     }
 }
 
+impl From<FilterLog> for ExecutionLog {
+    fn from(value: FilterLog) -> Self {
+        value.inner.inner.inner
+    }
+}
+
 impl alloy_rlp::Encodable for FilterLog {
     fn encode(&self, out: &mut dyn BufMut) {
         self.inner.encode(out);
@@ -40,7 +46,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        log::{FullBlockLog, Log, ReceiptLog},
+        log::{ExecutionLog, FullBlockLog, ReceiptLog},
         Address, Bytes, B256,
     };
 
@@ -49,7 +55,7 @@ mod tests {
         let log = FilterLog {
             inner: FullBlockLog {
                 inner: ReceiptLog {
-                    inner: Log::new_unchecked(
+                    inner: ExecutionLog::new_unchecked(
                         Address::from_str("0000000000000000000000000000000000000011")?,
                         vec![
                             B256::from_str(

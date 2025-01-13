@@ -1,25 +1,21 @@
 use std::sync::Arc;
 
-use edr_eth::{Address, Bytes};
+use edr_eth::{address, result::EVMErrorWiring, Address, Bytes};
 use edr_evm::{
-    address,
-    db::Database,
-    evm::{EvmHandler, FrameOrResult},
-    EVMError, GetContextData,
+    evm::{handler::register::EvmHandler, FrameOrResult},
+    GetContextData,
 };
 
 const CONSOLE_ADDRESS: Address = address!("000000000000000000636F6e736F6c652e6c6f67");
 
 /// Registers the `ConsoleLogCollector`'s handles.
-pub fn register_console_log_handles<
-    DatabaseT: Database,
-    ContextT: GetContextData<ConsoleLogCollector>,
->(
-    handler: &mut EvmHandler<'_, ContextT, DatabaseT>,
-) {
+pub fn register_console_log_handles<EvmWiringT>(handler: &mut EvmHandler<'_, EvmWiringT>)
+where
+    EvmWiringT: edr_evm::spec::EvmWiring<ExternalContext: GetContextData<ConsoleLogCollector>>,
+{
     let old_handle = handler.execution.call.clone();
     handler.execution.call = Arc::new(
-        move |ctx, inputs| -> Result<FrameOrResult, EVMError<DatabaseT::Error>> {
+        move |ctx, inputs| -> Result<FrameOrResult, EVMErrorWiring<EvmWiringT>> {
             if inputs.bytecode_address == CONSOLE_ADDRESS {
                 let collector = ctx.external.get_context_data();
                 collector.record_console_log(inputs.input.clone());
@@ -48,27 +44,23 @@ impl ConsoleLogCollector {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use core::fmt::Debug;
-
     use anyhow::Context;
     use edr_eth::{
+        hex,
+        l1::L1ChainSpec,
         transaction::{self, request::TransactionRequestAndSender, TxKind},
         Bytes, U256,
     };
-    use edr_evm::hex;
 
     use crate::{data::ProviderData, time::TimeSinceEpoch};
 
     pub struct ConsoleLogTransaction {
-        pub transaction: TransactionRequestAndSender,
+        pub transaction: TransactionRequestAndSender<transaction::Request>,
         pub expected_call_data: Bytes,
     }
 
-    pub fn deploy_console_log_contract<
-        LoggerErrorT: Debug + Send + Sync + 'static,
-        TimerT: Clone + TimeSinceEpoch,
-    >(
-        provider_data: &mut ProviderData<LoggerErrorT, TimerT>,
+    pub fn deploy_console_log_contract<TimerT: Clone + TimeSinceEpoch>(
+        provider_data: &mut ProviderData<L1ChainSpec, TimerT>,
     ) -> anyhow::Result<ConsoleLogTransaction> {
         // Compiled with solc 0.8.17, without optimizations
         /*

@@ -4,14 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = { version = "1.0.75" }
+anyhow = { version = "1.0.89" }
 cfg-if = "1.0.0"
 clap = { version = "3.2.20", features = ["derive"] }
+derive-where = { version = "1.2.7", default-features = false }
 difference = { version = "2.0.0", default-features = false }
 edr_defaults = { version = "0.3.5", path = "../edr_defaults" }
 edr_eth = { version = "0.3.5", path = "../edr_eth" }
-edr_evm = { version = "0.3.5", path = "../edr_evm", features = ["tracing"] }
-edr_provider = { version = "0.3.5", path = "../edr_provider", features = ["test-utils"] }
+edr_evm = { version = "0.3.5", path = "../edr_evm", features = ["test-utils", "tracing"] }
+edr_generic = { version = "0.3.5", path = "../edr_generic" }
+edr_napi_core = { path = "../edr_napi_core" }
+edr_optimism = { path = "../edr_optimism" }
+edr_provider = { version = "0.3.5", path = "../edr_provider" }
 edr_rpc_eth = { version = "0.3.5", path = "../edr_rpc_eth" }
 edr_solidity = { version = "0.3.5", path = "../edr_solidity" }
 flate2 = "1.0.28"
@@ -19,8 +23,8 @@ indicatif = { version = "0.17.7", features = ["rayon"] }
 mimalloc = { version = "0.1.39", default-features = false }
 parking_lot = { version = "0.12.1", default-features = false }
 reqwest = { version = "0.11.12", features = ["blocking"] }
-serde_json = "1.0.107"
-serde = { version = "1.0.189", features = ["derive"] }
+serde_json = "1.0.127"
+serde = { version = "1.0.209", features = ["derive"] }
 tempfile = "3.7.1"
 tokio = "1.33.0"
 tracing = { version = "0.1.37", features = ["attributes", "std"], optional = true }

@@ -1,10 +1,10 @@
 use crate::{account::BasicAccount, trie::sec_trie_root, Address, HashMap, B256, U256};
 
-/// State mapping of addresses to accounts.
-pub type State = HashMap<Address, BasicAccount>;
-
 /// Account storage mapping of indices to values.
-pub type Storage = HashMap<U256, U256>;
+pub type AccountStorage = HashMap<U256, U256>;
+
+/// State mapping of addresses to accounts.
+pub type EvmState = HashMap<Address, BasicAccount>;
 
 /// Calculates the state root hash of the provided state.
 pub fn state_root<'a, I>(state: I) -> B256
@@ -37,14 +37,14 @@ mod tests {
 
     #[test]
     fn empty_state_root() {
-        let state = State::default();
+        let state = EvmState::default();
 
         assert_eq!(state_root(&state), KECCAK_NULL_RLP);
     }
 
     #[test]
     fn empty_storage_root() {
-        let storage = Storage::default();
+        let storage = AccountStorage::default();
 
         assert_eq!(storage_root(&storage), KECCAK_NULL_RLP);
     }
@@ -53,7 +53,7 @@ mod tests {
     fn precompiles_state_root() {
         const EXPECTED: &str = "0x5766c887a7240e4d1c035ccd3830a2f6a0c03d213a9f0b9b27c774916a4abcce";
 
-        let mut state = State::default();
+        let mut state = EvmState::default();
 
         for idx in 1..=8u8 {
             let mut address = Address::ZERO;

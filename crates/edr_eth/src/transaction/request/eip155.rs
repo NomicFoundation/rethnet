@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 
 use alloy_rlp::{BufMut, Encodable};
 use k256::SecretKey;
-use revm_primitives::keccak256;
 
 use crate::{
+    keccak256,
     signature::{self, public_key_to_address, Fakeable, SignatureError},
     transaction::{self, TxKind},
     Address, Bytes, B256, U256,
@@ -23,6 +23,9 @@ pub struct Eip155 {
 }
 
 impl Eip155 {
+    /// The type identifier for a post-EIP-155 transaction.
+    pub const TYPE: u8 = super::Legacy::TYPE;
+
     /// Computes the hash of the transaction.
     pub fn hash(&self) -> B256 {
         keccak256(alloy_rlp::encode(self))
@@ -64,6 +67,7 @@ impl Eip155 {
             input: self.input,
             signature: Fakeable::with_address_unchecked(signature, caller),
             hash: OnceLock::new(),
+            rlp_encoding: OnceLock::new(),
         })
     }
 
@@ -80,6 +84,7 @@ impl Eip155 {
             input: self.input,
             signature: signature::Fakeable::fake(address, Some(v)),
             hash: OnceLock::new(),
+            rlp_encoding: OnceLock::new(),
         }
     }
 
@@ -131,6 +136,8 @@ impl Encodable for Eip155 {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+
+    use transaction::ExecutableTransaction as _;
 
     use super::*;
     use crate::transaction::fake_signature::tests::test_fake_sign_properties;
@@ -194,7 +201,7 @@ mod tests {
 
         let expected_hash: B256 =
             "bcdd3230665912079522dfbfe605e70443c81bf78db768a688a8d8007accf14b".parse()?;
-        assert_eq!(signed.hash(), &expected_hash);
+        assert_eq!(signed.transaction_hash(), &expected_hash);
 
         Ok(())
     }

@@ -145,7 +145,7 @@ impl<'a> Deserialize<'a> for Version {
 
 struct VersionVisitor;
 
-impl<'a> serde::de::Visitor<'a> for VersionVisitor {
+impl serde::de::Visitor<'_> for VersionVisitor {
     type Value = Version;
 
     fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

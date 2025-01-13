@@ -1,8 +1,7 @@
 use std::{borrow::Cow, collections::HashSet, mem};
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use edr_eth::U256;
-use edr_evm::{hex, interpreter::OpCode, HaltReason};
+use edr_eth::{bytecode::opcode::OpCode, hex, spec::HaltReasonTrait, U256};
 use semver::{Version, VersionReq};
 
 use crate::{
@@ -10,7 +9,6 @@ use crate::{
         ContractFunction, ContractFunctionType, ContractKind, ContractMetadata,
         ContractMetadataError, Instruction, JumpType, SourceLocation,
     },
-    exit_code::ExitCode,
     nested_trace::{
         CallMessage, CreateMessage, CreateOrCallMessageRef, NestedTrace, NestedTraceStep,
     },
@@ -39,15 +37,15 @@ pub enum Heuristic {
 
 /// Data that is used to infer the stack trace of a submessage.
 #[derive(Clone, Debug)]
-pub(crate) struct SubmessageData {
-    pub message_trace: NestedTrace,
+pub(crate) struct SubmessageData<HaltReasonT: HaltReasonTrait> {
+    pub message_trace: NestedTrace<HaltReasonT>,
     pub stacktrace: Vec<StackTraceEntry>,
     pub step_index: u32,
 }
 
 /// Errors that can occur during the inference of the stack trace.
 #[derive(Debug, thiserror::Error)]
-pub enum InferrerError {
+pub enum InferrerError<HaltReasonT: HaltReasonTrait> {
     /// Errors that can occur when decoding the ABI.
     #[error("{0}")]
     Abi(String),
@@ -63,7 +61,7 @@ pub enum InferrerError {
     /// Invalid input or logic error: The call trace has no functionJumpdest but
     /// has already jumped into a function.
     #[error("call trace has no functionJumpdest but has already jumped into a function")]
-    MissingFunctionJumpDest(CallMessage),
+    MissingFunctionJumpDest(CallMessage<HaltReasonT>),
     /// Invalid input or logic error: Missing source reference.
     #[error("Missing source reference")]
     MissingSourceReference,
@@ -77,15 +75,15 @@ pub enum InferrerError {
 
 // Automatic conversion from `alloy_dyn_abi::Error` to `InferrerError` is not
 // possible due to unsatisifed trait bounds.
-impl From<alloy_dyn_abi::Error> for InferrerError {
+impl<HaltReasonT: HaltReasonTrait> From<alloy_dyn_abi::Error> for InferrerError<HaltReasonT> {
     fn from(err: alloy_dyn_abi::Error) -> Self {
         Self::Abi(err.to_string())
     }
 }
 
-pub(crate) fn filter_redundant_frames(
+pub(crate) fn filter_redundant_frames<HaltReasonT: HaltReasonTrait>(
     stacktrace: Vec<StackTraceEntry>,
-) -> Result<Vec<StackTraceEntry>, InferrerError> {
+) -> Result<Vec<StackTraceEntry>, InferrerError<HaltReasonT>> {
     // To work around the borrow checker, we'll collect the indices of the frames we
     // want to keep. We can't clone the frames, because some of them contain
     // non-Clone `ClassInstance`s`
@@ -161,13 +159,13 @@ pub(crate) fn filter_redundant_frames(
         .collect())
 }
 
-pub(crate) fn infer_after_tracing(
-    trace: CreateOrCallMessageRef<'_>,
+pub(crate) fn infer_after_tracing<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     stacktrace: Vec<StackTraceEntry>,
     function_jumpdests: &[&Instruction],
     jumped_into_function: bool,
-    last_submessage_data: Option<SubmessageData>,
-) -> Result<Vec<StackTraceEntry>, InferrerError> {
+    last_submessage_data: Option<SubmessageData<HaltReasonT>>,
+) -> Result<Vec<StackTraceEntry>, InferrerError<HaltReasonT>> {
     /// Convenience macro to early return the result if a heuristic hits.
     macro_rules! return_if_hit {
         ($heuristic: expr) => {
@@ -202,9 +200,9 @@ pub(crate) fn infer_after_tracing(
     Ok(stacktrace)
 }
 
-pub(crate) fn infer_before_tracing_call_message(
-    trace: &CallMessage,
-) -> Result<Option<Vec<StackTraceEntry>>, InferrerError> {
+pub(crate) fn infer_before_tracing_call_message<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<Option<Vec<StackTraceEntry>>, InferrerError<HaltReasonT>> {
     if is_direct_library_call(trace)? {
         return Ok(Some(get_direct_library_call_error_stack_trace(trace)?));
     }
@@ -267,9 +265,9 @@ pub(crate) fn infer_before_tracing_call_message(
     Ok(None)
 }
 
-pub(crate) fn infer_before_tracing_create_message(
-    trace: &CreateMessage,
-) -> Result<Option<Vec<StackTraceEntry>>, InferrerError> {
+pub(crate) fn infer_before_tracing_create_message<HaltReasonT: HaltReasonTrait>(
+    trace: &CreateMessage<HaltReasonT>,
+) -> Result<Option<Vec<StackTraceEntry>>, InferrerError<HaltReasonT>> {
     if is_constructor_not_payable_error(trace)? {
         return Ok(Some(vec![StackTraceEntry::FunctionNotPayableError {
             source_reference: get_constructor_start_source_reference(trace)?,
@@ -286,10 +284,10 @@ pub(crate) fn infer_before_tracing_create_message(
     Ok(None)
 }
 
-pub(crate) fn instruction_to_callstack_stack_trace_entry(
+pub(crate) fn instruction_to_callstack_stack_trace_entry<HaltReasonT: HaltReasonTrait>(
     contract_meta: &ContractMetadata,
     inst: &Instruction,
-) -> Result<StackTraceEntry, InferrerError> {
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let contract = contract_meta.contract.read();
 
     // This means that a jump is made from within an internal solc function.
@@ -346,10 +344,10 @@ pub(crate) fn instruction_to_callstack_stack_trace_entry(
     })
 }
 
-fn call_instruction_to_call_failed_to_execute_stack_trace_entry(
+fn call_instruction_to_call_failed_to_execute_stack_trace_entry<HaltReasonT: HaltReasonTrait>(
     contract_meta: &ContractMetadata,
     call_inst: &Instruction,
-) -> Result<StackTraceEntry, InferrerError> {
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let location = call_inst.location.as_deref();
 
     let source_reference = source_location_to_source_reference(contract_meta, location)
@@ -359,14 +357,11 @@ fn call_instruction_to_call_failed_to_execute_stack_trace_entry(
     Ok(StackTraceEntry::CallFailedError { source_reference })
 }
 
-fn check_contract_too_large(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<Option<Vec<StackTraceEntry>>, InferrerError> {
+fn check_contract_too_large<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<Option<Vec<StackTraceEntry>>, InferrerError<HaltReasonT>> {
     if let CreateOrCallMessageRef::Create(create) = trace {
-        if matches!(
-            create.exit,
-            ExitCode::Halt(HaltReason::CreateContractSizeLimit)
-        ) {
+        if create.exit.is_contract_too_large_error() {
             return Ok(Some(vec![StackTraceEntry::ContractTooLargeError {
                 source_reference: Some(get_constructor_start_source_reference(create)?),
             }]));
@@ -375,11 +370,11 @@ fn check_contract_too_large(
     Ok(None)
 }
 
-fn check_custom_errors(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_custom_errors<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     stacktrace: Vec<StackTraceEntry>,
     last_instruction: &Instruction,
-) -> Result<Heuristic, InferrerError> {
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -433,10 +428,10 @@ fn check_custom_errors(
 }
 
 /// Check if the last call/create that was done failed.
-fn check_failed_last_call(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_failed_last_call<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     stacktrace: Vec<StackTraceEntry>,
-) -> Result<Heuristic, InferrerError> {
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -475,12 +470,12 @@ fn check_failed_last_call(
     Ok(Heuristic::Miss(stacktrace))
 }
 
-fn check_last_instruction(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_last_instruction<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     stacktrace: Vec<StackTraceEntry>,
     function_jumpdests: &[&Instruction],
     jumped_into_function: bool,
-) -> Result<Heuristic, InferrerError> {
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -586,11 +581,11 @@ fn check_last_instruction(
 }
 
 /// Check if the last submessage can be used to generate the stack trace.
-fn check_last_submessage(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_last_submessage<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     stacktrace: Vec<StackTraceEntry>,
-    last_submessage_data: Option<SubmessageData>,
-) -> Result<Heuristic, InferrerError> {
+    last_submessage_data: Option<SubmessageData<HaltReasonT>>,
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -663,11 +658,11 @@ fn check_last_submessage(
 }
 
 /// Check if the trace reverted with a panic error.
-fn check_panic(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_panic<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     mut stacktrace: Vec<StackTraceEntry>,
     last_instruction: &Instruction,
-) -> Result<Heuristic, InferrerError> {
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     let return_data = ReturnData::new(trace.return_data().clone());
 
     if !return_data.is_panic_return_data() {
@@ -698,10 +693,10 @@ fn check_panic(
     fix_initial_modifier(trace, stacktrace).map(Heuristic::Hit)
 }
 
-fn check_non_contract_called(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_non_contract_called<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     mut stacktrace: Vec<StackTraceEntry>,
-) -> Result<Heuristic, InferrerError> {
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     if is_called_non_contract_account_error(trace)? {
         let source_reference = get_last_source_reference(trace)?;
 
@@ -721,13 +716,13 @@ fn check_non_contract_called(
 }
 
 /// Check if the execution stopped with a revert or an invalid opcode.
-fn check_revert_or_invalid_opcode(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_revert_or_invalid_opcode<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     stacktrace: Vec<StackTraceEntry>,
     last_instruction: &Instruction,
     function_jumpdests: &[&Instruction],
     jumped_into_function: bool,
-) -> Result<Heuristic, InferrerError> {
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     match last_instruction.opcode {
         OpCode::REVERT | OpCode::INVALID => {}
         _ => return Ok(Heuristic::Miss(stacktrace)),
@@ -848,10 +843,10 @@ fn check_revert_or_invalid_opcode(
     Ok(Heuristic::Miss(stacktrace))
 }
 
-fn check_solidity_0_6_3_unmapped_revert(
-    trace: CreateOrCallMessageRef<'_>,
+fn check_solidity_0_6_3_unmapped_revert<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     mut stacktrace: Vec<StackTraceEntry>,
-) -> Result<Heuristic, InferrerError> {
+) -> Result<Heuristic, InferrerError<HaltReasonT>> {
     if solidity_0_6_3_maybe_unmapped_revert(trace)? {
         let revert_frame = solidity_0_6_3_get_frame_for_unmapped_revert_within_function(trace)?;
 
@@ -867,7 +862,9 @@ fn check_solidity_0_6_3_unmapped_revert(
     Ok(Heuristic::Miss(stacktrace))
 }
 
-fn empty_calldata_and_no_receive(trace: &CallMessage) -> Result<bool, InferrerError> {
+fn empty_calldata_and_no_receive<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta
         .as_ref()
@@ -885,10 +882,10 @@ fn empty_calldata_and_no_receive(trace: &CallMessage) -> Result<bool, InferrerEr
     Ok(trace.calldata.is_empty() && contract.receive.is_none())
 }
 
-fn fails_right_after_call(
-    trace: CreateOrCallMessageRef<'_>,
+fn fails_right_after_call<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     call_subtrace_step_index: u32,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -919,10 +916,10 @@ fn fails_right_after_call(
     is_last_location(trace, call_subtrace_step_index + 1, call_inst_location)
 }
 
-fn fix_initial_modifier(
-    trace: CreateOrCallMessageRef<'_>,
+fn fix_initial_modifier<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     mut stacktrace: Vec<StackTraceEntry>,
-) -> Result<Vec<StackTraceEntry>, InferrerError> {
+) -> Result<Vec<StackTraceEntry>, InferrerError<HaltReasonT>> {
     if let Some(StackTraceEntry::CallstackEntry {
         function_type: ContractFunctionType::Modifier,
         ..
@@ -971,9 +968,9 @@ fn format_dyn_sol_value(val: &DynSolValue) -> String {
     }
 }
 
-fn get_constructor_start_source_reference(
-    trace: &CreateMessage,
-) -> Result<SourceReference, InferrerError> {
+fn get_constructor_start_source_reference<HaltReasonT: HaltReasonTrait>(
+    trace: &CreateMessage<HaltReasonT>,
+) -> Result<SourceReference, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta
         .as_ref()
@@ -1002,9 +999,9 @@ fn get_constructor_start_source_reference(
     })
 }
 
-fn get_contract_start_without_function_source_reference(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<SourceReference, InferrerError> {
+fn get_contract_start_without_function_source_reference<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<SourceReference, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .clone()
@@ -1026,9 +1023,9 @@ fn get_contract_start_without_function_source_reference(
     })
 }
 
-fn get_direct_library_call_error_stack_trace(
-    trace: &CallMessage,
-) -> Result<Vec<StackTraceEntry>, InferrerError> {
+fn get_direct_library_call_error_stack_trace<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta
         .as_ref()
@@ -1052,10 +1049,10 @@ fn get_direct_library_call_error_stack_trace(
     }])
 }
 
-fn get_function_start_source_reference(
-    trace: CreateOrCallMessageRef<'_>,
+fn get_function_start_source_reference<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     func: &ContractFunction,
-) -> Result<SourceReference, InferrerError> {
+) -> Result<SourceReference, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1077,9 +1074,9 @@ fn get_function_start_source_reference(
     })
 }
 
-fn get_entry_before_initial_modifier_callstack_entry(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<StackTraceEntry, InferrerError> {
+fn get_entry_before_initial_modifier_callstack_entry<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let trace = match trace {
         CreateOrCallMessageRef::Create(create) => {
             return Ok(StackTraceEntry::CallstackEntry {
@@ -1118,10 +1115,10 @@ fn get_entry_before_initial_modifier_callstack_entry(
     })
 }
 
-fn get_entry_before_failure_in_modifier(
-    trace: CreateOrCallMessageRef<'_>,
+fn get_entry_before_failure_in_modifier<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     function_jumpdests: &[&Instruction],
-) -> Result<StackTraceEntry, InferrerError> {
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1150,9 +1147,9 @@ fn get_entry_before_failure_in_modifier(
     })
 }
 
-fn get_fallback_start_source_reference(
-    trace: &CallMessage,
-) -> Result<SourceReference, InferrerError> {
+fn get_fallback_start_source_reference<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<SourceReference, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta
         .as_ref()
@@ -1178,9 +1175,9 @@ fn get_fallback_start_source_reference(
     })
 }
 
-fn get_last_instruction_with_valid_location_step_index(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<Option<u32>, InferrerError> {
+fn get_last_instruction_with_valid_location_step_index<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<Option<u32>, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1202,9 +1199,9 @@ fn get_last_instruction_with_valid_location_step_index(
     Ok(None)
 }
 
-fn get_last_instruction_with_valid_location(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<Option<Instruction>, InferrerError> {
+fn get_last_instruction_with_valid_location<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<Option<Instruction>, InferrerError<HaltReasonT>> {
     let last_location_index = get_last_instruction_with_valid_location_step_index(trace)?;
 
     let Some(last_location_index) = last_location_index else {
@@ -1225,9 +1222,9 @@ fn get_last_instruction_with_valid_location(
         _ => Ok(None),
     }
 }
-fn get_last_source_reference(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<Option<SourceReference>, InferrerError> {
+fn get_last_source_reference<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<Option<SourceReference>, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1255,9 +1252,9 @@ fn get_last_source_reference(
     Ok(None)
 }
 
-fn get_other_error_before_called_function_stack_trace_entry(
-    trace: &CallMessage,
-) -> Result<StackTraceEntry, InferrerError> {
+fn get_other_error_before_called_function_stack_trace_entry<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let source_reference =
         get_contract_start_without_function_source_reference(CreateOrCallMessageRef::Call(trace))?;
 
@@ -1266,7 +1263,9 @@ fn get_other_error_before_called_function_stack_trace_entry(
     })
 }
 
-fn has_failed_inside_the_fallback_function(trace: &CallMessage) -> Result<bool, InferrerError> {
+fn has_failed_inside_the_fallback_function<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let contract = &trace
         .contract_meta
         .as_ref()
@@ -1280,7 +1279,9 @@ fn has_failed_inside_the_fallback_function(trace: &CallMessage) -> Result<bool, 
     }
 }
 
-fn has_failed_inside_the_receive_function(trace: &CallMessage) -> Result<bool, InferrerError> {
+fn has_failed_inside_the_receive_function<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let contract = &trace
         .contract_meta
         .as_ref()
@@ -1294,10 +1295,10 @@ fn has_failed_inside_the_receive_function(trace: &CallMessage) -> Result<bool, I
     }
 }
 
-fn has_failed_inside_function(
-    trace: &CallMessage,
+fn has_failed_inside_function<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
     func: &ContractFunction,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let last_step = trace
         .steps
         .iter()
@@ -1325,11 +1326,11 @@ fn has_failed_inside_function(
     })
 }
 
-fn instruction_within_function_to_custom_error_stack_trace_entry(
-    trace: CreateOrCallMessageRef<'_>,
+fn instruction_within_function_to_custom_error_stack_trace_entry<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     inst: &Instruction,
     message: String,
-) -> Result<StackTraceEntry, InferrerError> {
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let last_source_reference = get_last_source_reference(trace)?;
     let last_source_reference =
         last_source_reference.expect("Expected source reference to be defined");
@@ -1349,11 +1350,11 @@ fn instruction_within_function_to_custom_error_stack_trace_entry(
     })
 }
 
-fn instruction_within_function_to_panic_stack_trace_entry(
-    trace: CreateOrCallMessageRef<'_>,
+fn instruction_within_function_to_panic_stack_trace_entry<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     inst: &Instruction,
     error_code: U256,
-) -> Result<StackTraceEntry, InferrerError> {
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let last_source_reference = get_last_source_reference(trace)?;
 
     let contract_meta = trace
@@ -1371,10 +1372,10 @@ fn instruction_within_function_to_panic_stack_trace_entry(
     })
 }
 
-fn instruction_within_function_to_revert_stack_trace_entry(
-    trace: CreateOrCallMessageRef<'_>,
+fn instruction_within_function_to_revert_stack_trace_entry<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     inst: &Instruction,
-) -> Result<StackTraceEntry, InferrerError> {
+) -> Result<StackTraceEntry, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1390,10 +1391,12 @@ fn instruction_within_function_to_revert_stack_trace_entry(
     })
 }
 
-fn instruction_within_function_to_unmapped_solc_0_6_3_revert_error_source_reference(
-    trace: CreateOrCallMessageRef<'_>,
+fn instruction_within_function_to_unmapped_solc_0_6_3_revert_error_source_reference<
+    HaltReasonT: HaltReasonTrait,
+>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     inst: &Instruction,
-) -> Result<Option<SourceReference>, InferrerError> {
+) -> Result<Option<SourceReference>, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1404,9 +1407,9 @@ fn instruction_within_function_to_unmapped_solc_0_6_3_revert_error_source_refere
     Ok(source_reference)
 }
 
-fn is_called_non_contract_account_error(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<bool, InferrerError> {
+fn is_called_non_contract_account_error<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     // We could change this to checking that the last valid location maps to a call,
     // but it's way more complex as we need to get the ast node from that
     // location.
@@ -1444,11 +1447,11 @@ fn is_called_non_contract_account_error(
     Ok(prev_inst.opcode == OpCode::EXTCODESIZE)
 }
 
-fn is_call_failed_error(
-    trace: CreateOrCallMessageRef<'_>,
+fn is_call_failed_error<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     inst_index: u32,
     call_instruction: &Instruction,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let call_location = match &call_instruction.location {
         Some(location) => location,
         None => panic!("Expected call location to be defined"),
@@ -1459,7 +1462,9 @@ fn is_call_failed_error(
 
 /// Returns a source reference pointing to the constructor if it exists, or
 /// to the contract otherwise.
-fn is_constructor_invalid_arguments_error(trace: &CreateMessage) -> Result<bool, InferrerError> {
+fn is_constructor_invalid_arguments_error<HaltReasonT: HaltReasonTrait>(
+    trace: &CreateMessage<HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     if trace.return_data.len() > 0 {
         return Ok(false);
     }
@@ -1518,7 +1523,9 @@ fn is_constructor_invalid_arguments_error(trace: &CreateMessage) -> Result<bool,
     Ok(has_read_deployment_code_size)
 }
 
-fn is_constructor_not_payable_error(trace: &CreateMessage) -> Result<bool, InferrerError> {
+fn is_constructor_not_payable_error<HaltReasonT: HaltReasonTrait>(
+    trace: &CreateMessage<HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     // This error doesn't return data
     if !trace.return_data.is_empty() {
         return Ok(false);
@@ -1545,7 +1552,9 @@ fn is_constructor_not_payable_error(trace: &CreateMessage) -> Result<bool, Infer
     Ok(constructor.is_payable != Some(true))
 }
 
-fn is_direct_library_call(trace: &CallMessage) -> Result<bool, InferrerError> {
+fn is_direct_library_call<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let contract = &trace
         .contract_meta
         .as_ref()
@@ -1556,10 +1565,10 @@ fn is_direct_library_call(trace: &CallMessage) -> Result<bool, InferrerError> {
     Ok(trace.depth == 0 && contract.r#type == ContractKind::Library)
 }
 
-fn is_contract_call_run_out_of_gas_error(
-    trace: CreateOrCallMessageRef<'_>,
+fn is_contract_call_run_out_of_gas_error<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     call_step_index: u32,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let steps = trace.steps();
     let return_data = trace.return_data();
     let exit_code = trace.exit_code();
@@ -1586,10 +1595,10 @@ fn is_contract_call_run_out_of_gas_error(
     fails_right_after_call(trace, call_step_index)
 }
 
-fn is_fallback_not_payable_error(
-    trace: &CallMessage,
+fn is_fallback_not_payable_error<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
     called_function: Option<&ContractFunction>,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     // This error doesn't return data
     if !trace.return_data.is_empty() {
         return Ok(false);
@@ -1616,10 +1625,10 @@ fn is_fallback_not_payable_error(
     }
 }
 
-fn is_function_not_payable_error(
-    trace: &CallMessage,
+fn is_function_not_payable_error<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
     called_function: &ContractFunction,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     // This error doesn't return data
     if !trace.return_data.is_empty() {
         return Ok(false);
@@ -1643,11 +1652,11 @@ fn is_function_not_payable_error(
     Ok(called_function.is_payable != Some(true))
 }
 
-fn is_last_location(
-    trace: CreateOrCallMessageRef<'_>,
+fn is_last_location<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     from_step: u32,
     location: &SourceLocation,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1671,10 +1680,10 @@ fn is_last_location(
     Ok(true)
 }
 
-fn is_missing_function_and_fallback_error(
-    trace: &CallMessage,
+fn is_missing_function_and_fallback_error<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
     called_function: Option<&ContractFunction>,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     // This error doesn't return data
     if trace.return_data.len() > 0 {
         return Ok(false);
@@ -1699,10 +1708,10 @@ fn is_missing_function_and_fallback_error(
     Ok(contract.fallback.is_none())
 }
 
-fn is_proxy_error_propagated(
-    trace: CreateOrCallMessageRef<'_>,
+fn is_proxy_error_propagated<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     call_subtrace_step_index: u32,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let trace = match &trace {
         CreateOrCallMessageRef::Call(call) => call,
         CreateOrCallMessageRef::Create(_) => return Ok(false),
@@ -1779,10 +1788,10 @@ fn is_proxy_error_propagated(
     Ok(last_inst.opcode == OpCode::REVERT)
 }
 
-fn is_subtrace_error_propagated(
-    trace: CreateOrCallMessageRef<'_>,
+fn is_subtrace_error_propagated<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     call_subtrace_step_index: u32,
-) -> Result<bool, InferrerError> {
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let return_data = trace.return_data();
     let steps = trace.steps();
     let exit = trace.exit_code();
@@ -1815,10 +1824,10 @@ fn is_subtrace_error_propagated(
     fails_right_after_call(trace, call_subtrace_step_index)
 }
 
-fn other_execution_error_stacktrace(
-    trace: CreateOrCallMessageRef<'_>,
+fn other_execution_error_stacktrace<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
     mut stacktrace: Vec<StackTraceEntry>,
-) -> Result<Vec<StackTraceEntry>, InferrerError> {
+) -> Result<Vec<StackTraceEntry>, InferrerError<HaltReasonT>> {
     let other_execution_error_frame = StackTraceEntry::OtherExecutionError {
         source_reference: get_last_source_reference(trace)?,
     };
@@ -1827,9 +1836,9 @@ fn other_execution_error_stacktrace(
     Ok(stacktrace)
 }
 
-fn solidity_0_6_3_maybe_unmapped_revert(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<bool, InferrerError> {
+fn solidity_0_6_3_maybe_unmapped_revert<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<bool, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -1858,9 +1867,9 @@ fn solidity_0_6_3_maybe_unmapped_revert(
 
 // Solidity 0.6.3 unmapped reverts special handling
 // For more info: https://github.com/ethereum/solidity/issues/9006
-fn solidity_0_6_3_get_frame_for_unmapped_revert_before_function(
-    trace: &CallMessage,
-) -> Result<Option<StackTraceEntry>, InferrerError> {
+fn solidity_0_6_3_get_frame_for_unmapped_revert_before_function<HaltReasonT: HaltReasonTrait>(
+    trace: &CallMessage<HaltReasonT>,
+) -> Result<Option<StackTraceEntry>, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta
         .as_ref()
@@ -1933,9 +1942,9 @@ fn solidity_0_6_3_get_frame_for_unmapped_revert_before_function(
     Ok(revert_frame)
 }
 
-fn solidity_0_6_3_get_frame_for_unmapped_revert_within_function(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<Option<StackTraceEntry>, InferrerError> {
+fn solidity_0_6_3_get_frame_for_unmapped_revert_within_function<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<Option<StackTraceEntry>, InferrerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;

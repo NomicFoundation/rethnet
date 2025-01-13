@@ -1,28 +1,49 @@
-use core::fmt::Debug;
+use edr_eth::{result::InvalidTransaction, transaction::TransactionValidation};
 
-use edr_evm::trace::Trace;
+use crate::{
+    data::ProviderData, spec::SyncProviderSpec, time::TimeSinceEpoch, ProviderError,
+    ProviderResultWithTraces,
+};
 
-use crate::{data::ProviderData, time::TimeSinceEpoch, ProviderError};
-
-pub fn handle_interval_mine_request<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
-    data: &mut ProviderData<LoggerErrorT, TimerT>,
-) -> Result<bool, ProviderError<LoggerErrorT>> {
+pub fn handle_interval_mine_request<
+    ChainSpecT: SyncProviderSpec<
+        TimerT,
+        BlockEnv: Default,
+        SignedTransaction: Default
+                               + TransactionValidation<
+            ValidationError: From<InvalidTransaction> + PartialEq,
+        >,
+    >,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &mut ProviderData<ChainSpecT, TimerT>,
+) -> Result<bool, ProviderError<ChainSpecT>> {
     data.interval_mine()
 }
 
-pub fn handle_mine<LoggerErrorT: Debug, TimerT: Clone + TimeSinceEpoch>(
-    data: &mut ProviderData<LoggerErrorT, TimerT>,
+pub fn handle_mine<
+    ChainSpecT: SyncProviderSpec<
+        TimerT,
+        BlockEnv: Default,
+        SignedTransaction: Default
+                               + TransactionValidation<
+            ValidationError: From<InvalidTransaction> + PartialEq,
+        >,
+    >,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &mut ProviderData<ChainSpecT, TimerT>,
     number_of_blocks: Option<u64>,
     interval: Option<u64>,
-) -> Result<(bool, Vec<Trace>), ProviderError<LoggerErrorT>> {
+) -> ProviderResultWithTraces<bool, ChainSpecT> {
     let number_of_blocks = number_of_blocks.unwrap_or(1);
     let interval = interval.unwrap_or(1);
 
     let mined_block_results = data.mine_and_commit_blocks(number_of_blocks, interval)?;
 
-    let spec_id = data.spec_id();
+    let hardfork = data.hardfork();
     data.logger_mut()
-        .log_mined_block(spec_id, &mined_block_results)
+        .log_mined_block(hardfork, &mined_block_results)
         .map_err(ProviderError::Logger)?;
 
     let traces = mined_block_results

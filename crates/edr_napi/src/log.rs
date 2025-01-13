@@ -10,7 +10,7 @@ pub struct ExecutionLog {
 }
 
 impl ExecutionLog {
-    pub fn new(env: &Env, log: &edr_evm::Log) -> napi::Result<Self> {
+    pub fn new(env: &Env, log: &edr_eth::log::ExecutionLog) -> napi::Result<Self> {
         let topics = log
             .topics()
             .iter()

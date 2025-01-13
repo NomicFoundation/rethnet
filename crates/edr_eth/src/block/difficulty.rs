@@ -1,19 +1,19 @@
-use crate::{block::Header, trie::KECCAK_RLP_EMPTY_ARRAY, SpecId, U256};
+use crate::{block::Header, l1, spec::EthHeaderConstants, trie::KECCAK_RLP_EMPTY_ARRAY, U256};
 
-fn bomb_delay(spec_id: SpecId) -> u64 {
+fn bomb_delay(spec_id: l1::SpecId) -> u64 {
     match spec_id {
-        SpecId::FRONTIER
-        | SpecId::FRONTIER_THAWING
-        | SpecId::HOMESTEAD
-        | SpecId::DAO_FORK
-        | SpecId::TANGERINE
-        | SpecId::SPURIOUS_DRAGON => 0,
-        SpecId::BYZANTIUM => 3000000,
-        SpecId::CONSTANTINOPLE | SpecId::PETERSBURG | SpecId::ISTANBUL => 5000000,
-        SpecId::MUIR_GLACIER | SpecId::BERLIN | SpecId::LONDON => 9000000,
+        l1::SpecId::FRONTIER
+        | l1::SpecId::FRONTIER_THAWING
+        | l1::SpecId::HOMESTEAD
+        | l1::SpecId::DAO_FORK
+        | l1::SpecId::TANGERINE
+        | l1::SpecId::SPURIOUS_DRAGON => 0,
+        l1::SpecId::BYZANTIUM => 3000000,
+        l1::SpecId::CONSTANTINOPLE | l1::SpecId::PETERSBURG | l1::SpecId::ISTANBUL => 5000000,
+        l1::SpecId::MUIR_GLACIER | l1::SpecId::BERLIN | l1::SpecId::LONDON => 9000000,
         // SpecId::LONDON => 9500000, // EIP-3554
-        SpecId::ARROW_GLACIER => 10700000,
-        SpecId::GRAY_GLACIER => 11400000,
+        l1::SpecId::ARROW_GLACIER => 10700000,
+        l1::SpecId::GRAY_GLACIER => 11400000,
         _ => {
             unreachable!("Post-merge hardforks don't have a bomb delay")
         }
@@ -21,15 +21,15 @@ fn bomb_delay(spec_id: SpecId) -> u64 {
 }
 
 /// Calculates the mining difficulty of a block.
-pub fn calculate_ethash_canonical_difficulty(
-    spec_id: SpecId,
+pub fn calculate_ethash_canonical_difficulty<ChainSpecT: EthHeaderConstants>(
+    spec_id: l1::SpecId,
     parent: &Header,
     block_number: u64,
     block_timestamp: u64,
 ) -> U256 {
     // TODO: Create a custom config that prevents usage of older hardforks
     assert!(
-        spec_id >= SpecId::BYZANTIUM,
+        spec_id >= l1::SpecId::BYZANTIUM,
         "Hardforks older than Byzantium are not supported"
     );
 
@@ -61,6 +61,5 @@ pub fn calculate_ethash_canonical_difficulty(
         difficulty += U256::from(2u64).pow(U256::from(exp));
     }
 
-    let min_difficulty = U256::from(131072);
-    difficulty.max(min_difficulty)
+    difficulty.max(U256::from(ChainSpecT::MIN_ETHASH_DIFFICULTY))
 }

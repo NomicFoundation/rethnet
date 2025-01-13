@@ -66,7 +66,7 @@ pub enum CacheableLogFilterRange<'a> {
     },
 }
 
-impl<'a> CacheKeyVariant for CacheableLogFilterRange<'a> {
+impl CacheKeyVariant for CacheableLogFilterRange<'_> {
     fn cache_key_variant(&self) -> u8 {
         match self {
             CacheableLogFilterRange::Hash(_) => 0,

@@ -4,35 +4,39 @@ version = "0.3.5"
 edition = "2021"
 
 [dependencies]
-alloy-dyn-abi = { version = "0.7.6", features = ["eip712"] }
-alloy-sol-types = { version = "0.5.1", default-features = false, features = ["std"] }
-anyhow = { version = "1.0.75", optional = true }
+alloy-dyn-abi = { version = "0.8.3", features = ["eip712"] }
+alloy-sol-types = { version = "0.8.3", default-features = false, features = ["std"] }
+anyhow = { version = "1.0.89", optional = true }
 auto_impl = { version = "1.2", default-features = false }
+derive-where = { version = "1.2.7", default-features = false }
 dyn-clone = { version = "1.0.13", default-features = false }
 edr_defaults = { version = "0.3.5", path = "../edr_defaults" }
-edr_eth = { version = "0.3.5", path = "../edr_eth", features = ["rand"] }
+edr_eth = { version = "0.3.5", path = "../edr_eth" }
 edr_evm = { version = "0.3.5", path = "../edr_evm", features = ["tracing"] }
 edr_rpc_eth = { version = "0.3.5", path = "../edr_rpc_eth" }
 edr_solidity = { version = "0.3.5", path = "../edr_solidity" }
+edr_test_utils = { version = "0.3.5", path = "../edr_test_utils", optional = true }
+edr_utils = { version = "0.3.5", path = "../edr_utils" }
 indexmap = { version = "2.0.0", default-features = false, features = ["std"] }
 itertools = { version = "0.12.0", default-features = false, features = ["use_alloc"] }
 k256 = { version = "0.13.1", default-features = false, features = ["arithmetic", "ecdsa", "pem", "pkcs8", "precomputed-tables", "std"] }
 lazy_static = { version = "1.4.0", default-features = false }
 log = { version = "0.4.20", default-features = false }
+lru = "0.12.2"
 parking_lot = { version = "0.12.1", default-features = false }
 rand = { version = "0.8.5", default-features = false }
-revm-precompile = { version = "9.1", default-features = false, features = ["c-kzg", "secp256r1", "std"] }
+revm-precompile = { git = "https://github.com/nomicfoundation/revm", rev = "4722477", version = "11.0", default-features = false, features = ["c-kzg", "secp256r1", "std"] }
 rpds = { version = "1.1.0", default-features = false, features = ["std"] }
-serde = { version = "1.0.147", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0.89" }
+serde = { version = "1.0.209", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.127" }
 sha3 = { version = "0.10.6", default-features = false }
 thiserror = { version = "1.0.37", default-features = false }
 tokio = { version = "1.21.2", default-features = false, features = ["macros"] }
 tracing = { version = "0.1.37", features = ["attributes", "std"], optional = true }
-lru = "0.12.2"
 
 [dev-dependencies]
-anyhow = "1.0.75"
+anyhow = "1.0.89"
+edr_evm = { path = "../edr_evm", features = ["test-utils"] }
 edr_test_utils = { version = "0.3.5", path = "../edr_test_utils" }
 paste = { version = "1.0.14", default-features = false }
 serial_test = "2.0.0"
@@ -43,7 +47,7 @@ cargo_toml = { version = "0.15.3", default-features = false }
 toml = { version = "0.5.9", default-features = false }
 
 [features]
-test-utils = ["anyhow"]
+test-utils = ["dep:anyhow", "dep:edr_test_utils"]
 tracing = ["dep:tracing", "edr_eth/tracing", "edr_evm/tracing"]
 test-remote = []
 

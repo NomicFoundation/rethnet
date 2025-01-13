@@ -1,13 +1,14 @@
 use std::sync::OnceLock;
 
-use alloy_rlp::{RlpDecodable, RlpEncodable};
-use revm_primitives::{keccak256, TransactTo, TxEnv, GAS_PER_BLOB};
+use alloy_rlp::{Encodable as _, RlpDecodable, RlpEncodable};
+use revm_primitives::{keccak256, GAS_PER_BLOB};
 
 use crate::{
+    eips::{eip2930, eip7702},
     signature::{self, Fakeable},
-    transaction,
-    utils::envelop_bytes,
-    AccessList, Address, Bytes, B256, U256,
+    transaction::{self, ExecutableTransaction, Transaction, TxKind},
+    utils::enveloped,
+    Address, Bytes, B256, U256,
 };
 
 #[derive(Clone, Debug, Eq, RlpEncodable)]
@@ -25,7 +26,7 @@ pub struct Eip4844 {
     pub to: Address,
     pub value: U256,
     pub input: Bytes,
-    pub access_list: AccessList,
+    pub access_list: eip2930::AccessList,
     pub max_fee_per_blob_gas: U256,
     pub blob_hashes: Vec<B256>,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -35,50 +36,43 @@ pub struct Eip4844 {
     #[rlp(skip)]
     #[cfg_attr(feature = "serde", serde(skip))]
     pub hash: OnceLock<B256>,
+    /// Cached RLP-encoding
+    #[rlp(skip)]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub rlp_encoding: OnceLock<Bytes>,
 }
 
 impl Eip4844 {
-    /// Returns the caller/signer of the transaction.
-    pub fn caller(&self) -> &Address {
-        self.signature.caller()
+    /// The type identifier for an EIP-4844 transaction.
+    pub const TYPE: u8 = transaction::request::Eip4844::TYPE;
+}
+
+impl ExecutableTransaction for Eip4844 {
+    fn effective_gas_price(&self, block_base_fee: U256) -> Option<U256> {
+        Some(
+            self.max_fee_per_gas
+                .min(block_base_fee + self.max_priority_fee_per_gas),
+        )
     }
 
-    pub fn nonce(&self) -> &u64 {
-        &self.nonce
+    fn max_fee_per_gas(&self) -> Option<&U256> {
+        Some(&self.max_fee_per_gas)
     }
 
-    pub fn hash(&self) -> &B256 {
-        self.hash.get_or_init(|| {
-            let encoded = alloy_rlp::encode(self);
-            let enveloped = envelop_bytes(3, &encoded);
-
-            keccak256(enveloped)
+    fn rlp_encoding(&self) -> &Bytes {
+        self.rlp_encoding.get_or_init(|| {
+            let mut encoded = Vec::with_capacity(1 + self.length());
+            enveloped(Self::TYPE, self, &mut encoded);
+            encoded.into()
         })
     }
 
-    /// Total blob gas used by the transaction.
-    pub fn total_blob_gas(&self) -> u64 {
-        GAS_PER_BLOB * self.blob_hashes.len() as u64
+    fn total_blob_gas(&self) -> Option<u64> {
+        Some(total_blob_gas(self))
     }
-}
 
-impl From<Eip4844> for TxEnv {
-    fn from(value: Eip4844) -> Self {
-        Self {
-            caller: *value.caller(),
-            gas_limit: value.gas_limit,
-            gas_price: value.max_fee_per_gas,
-            transact_to: TransactTo::Call(value.to),
-            value: value.value,
-            data: value.input,
-            nonce: Some(value.nonce),
-            chain_id: Some(value.chain_id),
-            access_list: value.access_list.into(),
-            gas_priority_fee: Some(value.max_priority_fee_per_gas),
-            blob_hashes: value.blob_hashes,
-            max_fee_per_blob_gas: Some(value.max_fee_per_blob_gas),
-            authorization_list: None,
-        }
+    fn transaction_hash(&self) -> &B256 {
+        self.hash.get_or_init(|| keccak256(self.rlp_encoding()))
     }
 }
 
@@ -99,6 +93,60 @@ impl PartialEq for Eip4844 {
     }
 }
 
+impl Transaction for Eip4844 {
+    fn caller(&self) -> &Address {
+        self.signature.caller()
+    }
+
+    fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+
+    fn gas_price(&self) -> &U256 {
+        &self.max_fee_per_gas
+    }
+
+    fn kind(&self) -> TxKind {
+        TxKind::Call(self.to)
+    }
+
+    fn value(&self) -> &U256 {
+        &self.value
+    }
+
+    fn data(&self) -> &Bytes {
+        &self.input
+    }
+
+    fn nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    fn chain_id(&self) -> Option<u64> {
+        Some(self.chain_id)
+    }
+
+    fn access_list(&self) -> &[eip2930::AccessListItem] {
+        &self.access_list.0
+    }
+
+    fn max_priority_fee_per_gas(&self) -> Option<&U256> {
+        Some(&self.max_priority_fee_per_gas)
+    }
+
+    fn blob_hashes(&self) -> &[B256] {
+        &self.blob_hashes
+    }
+
+    fn max_fee_per_blob_gas(&self) -> Option<&U256> {
+        Some(&self.max_fee_per_blob_gas)
+    }
+
+    fn authorization_list(&self) -> Option<&eip7702::AuthorizationList> {
+        None
+    }
+}
+
 #[derive(RlpDecodable)]
 struct Decodable {
     // The order of these fields determines decoding order.
@@ -110,7 +158,7 @@ struct Decodable {
     pub to: Address,
     pub value: U256,
     pub input: Bytes,
-    pub access_list: AccessList,
+    pub access_list: eip2930::AccessList,
     pub max_fee_per_blob_gas: U256,
     pub blob_hashes: Vec<B256>,
     pub signature: signature::SignatureWithYParity,
@@ -138,6 +186,7 @@ impl alloy_rlp::Decodable for Eip4844 {
             blob_hashes: transaction.blob_hashes,
             signature,
             hash: OnceLock::new(),
+            rlp_encoding: OnceLock::new(),
         })
     }
 }
@@ -158,6 +207,11 @@ impl From<&Decodable> for transaction::request::Eip4844 {
             blob_hashes: value.blob_hashes.clone(),
         }
     }
+}
+
+/// Total blob gas used by the transaction.
+pub fn total_blob_gas(transaction: &Eip4844) -> u64 {
+    GAS_PER_BLOB * (transaction.blob_hashes.len() as u64)
 }
 
 #[cfg(test)]
@@ -212,6 +266,7 @@ mod tests {
             blob_hashes: request.blob_hashes,
             signature,
             hash: OnceLock::new(),
+            rlp_encoding: OnceLock::new(),
         }
     }
 
@@ -235,7 +290,7 @@ mod tests {
                 .unwrap();
 
         let signed = dummy_transaction();
-        assert_eq!(expected, *signed.hash());
+        assert_eq!(expected, *signed.transaction_hash());
     }
 
     #[test]
@@ -287,6 +342,7 @@ mod tests {
             blob_hashes: request.blob_hashes,
             signature,
             hash: OnceLock::new(),
+            rlp_encoding: OnceLock::new(),
         };
 
         assert_eq!(*transaction.caller(), CALLER);

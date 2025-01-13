@@ -4,15 +4,13 @@ mod state_trie;
 mod storage_trie;
 mod trie_query;
 
-use edr_eth::{account::KECCAK_EMPTY, Address, B256, U256};
-use revm::{
-    db::StateRef,
-    primitives::{Account, AccountInfo, Bytecode, HashMap},
-    DatabaseCommit,
+use edr_eth::{
+    account::{Account, AccountInfo, KECCAK_EMPTY},
+    Address, Bytecode, HashMap, B256, U256,
 };
 
 pub use self::account::AccountTrie;
-use super::{StateDebug, StateError};
+use super::{State, StateCommit, StateDebug, StateError};
 use crate::collections::SharedMap;
 
 /// An implementation of revm's state that uses a trie.
@@ -124,7 +122,7 @@ impl Default for TrieState {
     }
 }
 
-impl StateRef for TrieState {
+impl State for TrieState {
     type Error = StateError;
 
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -146,7 +144,7 @@ impl StateRef for TrieState {
     }
 }
 
-impl DatabaseCommit for TrieState {
+impl StateCommit for TrieState {
     fn commit(&mut self, mut changes: HashMap<Address, Account>) {
         changes.iter_mut().for_each(|(address, account)| {
             if account.is_selfdestructed() {
@@ -251,8 +249,10 @@ impl StateDebug for TrieState {
 
 #[cfg(test)]
 mod tests {
+    use edr_eth::Bytes;
+
     use super::*;
-    use crate::{state::AccountModifierFn, Bytes};
+    use crate::state::AccountModifierFn;
 
     #[test]
     fn test_trie_state_clone() -> anyhow::Result<()> {

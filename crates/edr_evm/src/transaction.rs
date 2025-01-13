@@ -4,57 +4,70 @@ pub mod remote;
 
 use std::fmt::Debug;
 
+use derive_where::derive_where;
 // Re-export the transaction types from `edr_eth`.
 pub use edr_eth::transaction::*;
-use edr_eth::{SpecId, U256};
-use revm::{
-    db::DatabaseComponentError,
-    interpreter::gas::validate_initial_tx_gas,
-    primitives::{EVMError, InvalidHeader, InvalidTransaction},
-};
+use edr_eth::{l1, spec::ChainSpec, U256};
+use revm::interpreter::gas::validate_initial_tx_gas;
 
 pub use self::detailed::*;
+use crate::{
+    result::{EVMError, EVMErrorForChain, InvalidHeader},
+    spec::RuntimeSpec,
+    state::DatabaseComponentError,
+};
 
 /// Invalid transaction error
-#[derive(Debug, thiserror::Error)]
-pub enum TransactionError<BE, SE> {
+#[derive(thiserror::Error)]
+#[derive_where(Debug; <ChainSpecT::SignedTransaction as TransactionValidation>::ValidationError, BlockchainErrorT, StateErrorT)]
+pub enum TransactionError<ChainSpecT, BlockchainErrorT, StateErrorT>
+where
+    ChainSpecT: ChainSpec,
+{
     /// Blockchain errors
     #[error(transparent)]
-    Blockchain(#[from] BE),
-    #[error("{0}")]
+    Blockchain(BlockchainErrorT),
     /// Custom errors
+    #[error("{0}")]
     Custom(String),
     /// EIP-1559 is not supported
     #[error("Cannot run transaction: EIP 1559 is not activated.")]
     Eip1559Unsupported,
+    /// Invalid block header
+    #[error(transparent)]
+    InvalidHeader(InvalidHeader),
     /// Corrupt transaction data
-    #[error("Invalid transaction: {0:?}")]
-    InvalidTransaction(InvalidTransaction),
-    /// The transaction is expected to have a prevrandao, as the executor's
-    /// config is on a post-merge hardfork.
-    #[error("Post-merge transaction is missing prevrandao")]
-    MissingPrevrandao,
+    #[error(transparent)]
+    InvalidTransaction(<ChainSpecT::SignedTransaction as TransactionValidation>::ValidationError),
+    /// Transaction account does not have enough amount of ether to cover
+    /// transferred value and gas_limit*gas_price.
+    #[error("Sender doesn't have enough funds to send tx. The max upfront cost is: {fee} and the sender's balance is: {balance}.")]
+    LackOfFundForMaxFee {
+        /// The max upfront cost of the transaction
+        fee: Box<U256>,
+        /// The sender's balance
+        balance: Box<U256>,
+    },
     /// Precompile errors
     #[error("{0}")]
     Precompile(String),
     /// State errors
     #[error(transparent)]
-    State(SE),
+    State(StateErrorT),
 }
 
-impl<BE, SE> From<EVMError<DatabaseComponentError<SE, BE>>> for TransactionError<BE, SE>
+impl<ChainSpecT, BlockchainErrorT, StateErrorT>
+    From<EVMErrorForChain<ChainSpecT, BlockchainErrorT, StateErrorT>>
+    for TransactionError<ChainSpecT, BlockchainErrorT, StateErrorT>
 where
-    BE: Debug + Send,
-    SE: Debug + Send,
+    ChainSpecT: RuntimeSpec,
 {
-    fn from(error: EVMError<DatabaseComponentError<SE, BE>>) -> Self {
+    fn from(error: EVMErrorForChain<ChainSpecT, BlockchainErrorT, StateErrorT>) -> Self {
         match error {
-            EVMError::Transaction(e) => Self::InvalidTransaction(e),
-            EVMError::Header(
-                InvalidHeader::ExcessBlobGasNotSet | InvalidHeader::PrevrandaoNotSet,
-            ) => unreachable!("error: {error:?}"),
+            EVMError::Transaction(error) => ChainSpecT::cast_transaction_error(error),
+            EVMError::Header(error) => Self::InvalidHeader(error),
+            EVMError::Database(DatabaseComponentError::Blockchain(e)) => Self::Blockchain(e),
             EVMError::Database(DatabaseComponentError::State(e)) => Self::State(e),
-            EVMError::Database(DatabaseComponentError::BlockHash(e)) => Self::Blockchain(e),
             EVMError::Custom(error) => Self::Custom(error),
             EVMError::Precompile(error) => Self::Precompile(error),
         }
@@ -80,7 +93,7 @@ pub enum CreationError {
 /// Validates the transaction.
 pub fn validate<TransactionT: Transaction>(
     transaction: TransactionT,
-    spec_id: SpecId,
+    spec_id: l1::SpecId,
 ) -> Result<TransactionT, CreationError> {
     if transaction.kind() == TxKind::Create && transaction.data().is_empty() {
         return Err(CreationError::ContractMissingData);
@@ -98,7 +111,7 @@ pub fn validate<TransactionT: Transaction>(
 }
 
 /// Calculates the initial cost of a transaction.
-pub fn initial_cost(transaction: &impl Transaction, spec_id: SpecId) -> u64 {
+pub fn initial_cost(transaction: &impl Transaction, spec_id: l1::SpecId) -> u64 {
     validate_initial_tx_gas(
         spec_id,
         transaction.data().as_ref(),
@@ -132,7 +145,7 @@ mod tests {
 
         let transaction = request.fake_sign(caller);
         let transaction = transaction::Signed::from(transaction);
-        let result = validate(transaction, SpecId::BERLIN);
+        let result = validate(transaction, l1::SpecId::BERLIN);
 
         let expected_gas_cost = U256::from(21_000);
         assert!(matches!(
@@ -167,7 +180,7 @@ mod tests {
 
         let transaction = request.fake_sign(caller);
         let transaction = transaction::Signed::from(transaction);
-        let result = validate(transaction, SpecId::BERLIN);
+        let result = validate(transaction, l1::SpecId::BERLIN);
 
         assert!(matches!(result, Err(CreationError::ContractMissingData)));
 

@@ -6,6 +6,7 @@ use std::{
 
 use alloy_dyn_abi::TypedData;
 use edr_eth::{Address, Bytes, U256, U64};
+use edr_evm::spec::RuntimeSpec;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::ProviderError;
@@ -60,22 +61,20 @@ pub enum InvalidRequestReason<'a> {
 }
 
 impl<'a> InvalidRequestReason<'a> {
-    pub fn new(json_request: &'a str, error_message: &'a str) -> Self {
-        if let Ok(request) = serde_json::from_str::<RequestWithMethod<'a>>(json_request) {
+    pub fn new(method_name: Option<&'a str>, error_message: &'a str) -> Self {
+        if let Some(method_name) = method_name {
             if error_message.starts_with(STORAGE_KEY_TOO_LARGE_ERROR_MESSAGE) {
                 return InvalidRequestReason::InvalidStorageKey {
-                    method_name: request.method,
+                    method_name,
                     error_message,
                 };
             } else if error_message.starts_with(STORAGE_VALUE_INVALID_LENGTH_ERROR_MESSAGE) {
                 return InvalidRequestReason::InvalidStorageValue {
-                    method_name: request.method,
+                    method_name,
                     error_message,
                 };
             } else if error_message.starts_with(UNSUPPORTED_METHOD) {
-                return InvalidRequestReason::UnsupportedMethod {
-                    method_name: request.method,
-                };
+                return InvalidRequestReason::UnsupportedMethod { method_name };
             }
         }
 
@@ -103,9 +102,9 @@ impl<'a> InvalidRequestReason<'a> {
     }
 
     /// Converts the invalid request reason into a provider error.
-    pub fn provider_error<LoggerErrorT: Debug>(
+    pub fn provider_error<ChainSpecT: RuntimeSpec>(
         &self,
-    ) -> Option<(String, ProviderError<LoggerErrorT>)> {
+    ) -> Option<(&str, ProviderError<ChainSpecT>)> {
         match self {
             InvalidRequestReason::InvalidJson { .. } => None,
             InvalidRequestReason::InvalidStorageKey {
@@ -116,22 +115,17 @@ impl<'a> InvalidRequestReason<'a> {
                 error_message,
                 method_name,
             } => Some((
-                (*method_name).to_string(),
+                method_name,
                 ProviderError::InvalidInput((*error_message).to_string()),
             )),
             InvalidRequestReason::UnsupportedMethod { method_name } => Some((
-                (*method_name).to_string(),
+                method_name,
                 ProviderError::UnsupportedMethod {
                     method_name: (*method_name).to_string(),
                 },
             )),
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct RequestWithMethod<'a> {
-    method: &'a str,
 }
 
 /// Helper function for deserializing the JSON-RPC address type.

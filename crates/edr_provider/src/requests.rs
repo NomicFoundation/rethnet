@@ -1,18 +1,22 @@
-pub mod debug;
+pub(crate) mod debug;
 /// Ethereum RPC request types
-pub mod eth;
+pub(crate) mod eth;
 /// Hardhat RPC request types
-pub mod hardhat;
+pub(crate) mod hardhat;
 mod methods;
+mod resolve;
 mod serde;
-mod validation;
+/// Types and functions for validating JSON-RPC requests.
+pub mod validation;
 
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
 use ::serde::{
     de::{self, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
 };
+use derive_where::derive_where;
+use edr_rpc_eth::spec::RpcSpec;
 
 pub use crate::requests::{
     methods::{IntervalConfig, MethodInvocation},
@@ -20,27 +24,31 @@ pub use crate::requests::{
 };
 
 /// JSON-RPC request for the provider.
-#[derive(Clone, Debug, Serialize)]
-#[serde(untagged)]
-pub enum ProviderRequest {
+#[derive(Serialize)]
+#[derive_where(Clone, Debug; ChainSpecT::RpcCallRequest, ChainSpecT::RpcTransactionRequest)]
+#[serde(bound = "")]
+pub enum ProviderRequest<ChainSpecT: RpcSpec> {
     /// A single JSON-RPC request
-    Single(MethodInvocation),
+    Single(MethodInvocation<ChainSpecT>),
     /// A batch of requests
-    Batch(Vec<MethodInvocation>),
+    Batch(Vec<MethodInvocation<ChainSpecT>>),
 }
 
 // Custom deserializer for `ProviderRequest` instead of using
 // `#[serde(untagged)]` as the latter hides custom error messages which are
 // important to propagate to users.
-impl<'de> Deserialize<'de> for ProviderRequest {
+impl<'de, ChainSpecT: RpcSpec> Deserialize<'de> for ProviderRequest<ChainSpecT> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct SingleOrBatchRequestVisitor;
+        #[derive_where(Default)]
+        struct SingleOrBatchRequestVisitor<ChainSpecT: RpcSpec> {
+            phantom: PhantomData<ChainSpecT>,
+        }
 
-        impl<'de> Visitor<'de> for SingleOrBatchRequestVisitor {
-            type Value = ProviderRequest;
+        impl<'de, ChainSpecT: RpcSpec> Visitor<'de> for SingleOrBatchRequestVisitor<ChainSpecT> {
+            type Value = ProviderRequest<ChainSpecT>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("single or batch request")
@@ -56,7 +64,7 @@ impl<'de> Deserialize<'de> for ProviderRequest {
                 )?))
             }
 
-            fn visit_map<M>(self, map: M) -> Result<ProviderRequest, M::Error>
+            fn visit_map<M>(self, map: M) -> Result<ProviderRequest<ChainSpecT>, M::Error>
             where
                 M: MapAccess<'de>,
             {
@@ -67,13 +75,14 @@ impl<'de> Deserialize<'de> for ProviderRequest {
             }
         }
 
-        deserializer.deserialize_any(SingleOrBatchRequestVisitor)
+        deserializer.deserialize_any(SingleOrBatchRequestVisitor::<ChainSpecT>::default())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
+    use edr_eth::l1::L1ChainSpec;
 
     use super::*;
 
@@ -85,7 +94,7 @@ mod tests {
             "params": ["0x407d73d8a49eeb85d32cf465507dd71d507100c1", "latest"],
             "id": 1
         }"#;
-        let request: ProviderRequest = serde_json::from_str(json)?;
+        let request: ProviderRequest<L1ChainSpec> = serde_json::from_str(json)?;
         assert!(matches!(
             request,
             ProviderRequest::Single(MethodInvocation::GetBalance(..))
@@ -109,7 +118,7 @@ mod tests {
                 "id": 2
             }
         ]"#;
-        let request: ProviderRequest = serde_json::from_str(json)?;
+        let request: ProviderRequest<L1ChainSpec> = serde_json::from_str(json)?;
         assert!(matches!(request, ProviderRequest::Batch(_)));
         Ok(())
     }
@@ -119,7 +128,7 @@ mod tests {
         let s = "foo";
         let json = format!(r#""{s}""#);
 
-        let result: Result<ProviderRequest, _> = serde_json::from_str(&json);
+        let result: Result<ProviderRequest<L1ChainSpec>, _> = serde_json::from_str(&json);
 
         let error_message = result.err().context("result is error")?.to_string();
         assert!(error_message.contains(s));

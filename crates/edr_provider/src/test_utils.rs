@@ -1,28 +1,30 @@
-use std::{convert::Infallible, num::NonZeroU64, time::SystemTime};
+use core::fmt::Debug;
+use std::{num::NonZeroU64, sync::Arc, time::SystemTime};
 
 use anyhow::anyhow;
 use edr_eth::{
-    block::{miner_reward, BlobGas, BlockOptions},
-    receipt::BlockReceipt,
+    account::AccountInfo,
+    block::BlobGas,
+    l1::L1ChainSpec,
+    result::InvalidTransaction,
     signature::secret_key_from_str,
-    spec::chain_hardfork_activations,
-    transaction::EthTransactionRequest,
+    spec::HardforkTrait,
+    transaction::{self, request::TransactionRequestAndSender, TransactionValidation, TxKind},
     trie::KECCAK_NULL_RLP,
-    withdrawal::Withdrawal,
-    Address, Bytes, HashMap, PreEip1898BlockSpec, SpecId, B256, U256,
+    Address, Bytes, HashMap, B256, KECCAK_EMPTY, U160, U256,
 };
-use edr_evm::{
-    alloy_primitives::U160,
-    blockchain::{Blockchain as _, ForkedBlockchain},
-    chain_spec::L1ChainSpec,
-    state::IrregularState,
-    Block, BlockBuilder, CfgEnv, CfgEnvWithHandlerCfg, DebugContext, ExecutionResultWithContext,
-    IntoRemoteBlock, RandomHashGenerator,
-};
-use edr_rpc_eth::client::EthRpcClient;
+use edr_evm::Block as _;
+use edr_rpc_eth::TransactionRequest;
+use edr_solidity::contract_decoder::ContractDecoder;
+use tokio::runtime;
 
-use super::*;
-use crate::{config::MiningConfig, requests::hardhat::rpc_types::ForkConfig};
+use crate::{
+    config,
+    requests::hardhat::rpc_types::ForkConfig,
+    time::{CurrentTime, TimeSinceEpoch},
+    MethodInvocation, NoopLogger, Provider, ProviderConfig, ProviderData, ProviderError,
+    ProviderRequest, ProviderSpec, SyncProviderSpec,
+};
 
 pub const TEST_SECRET_KEY: &str =
     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -34,7 +36,7 @@ pub const TEST_SECRET_KEY_SIGN_TYPED_DATA_V4: &str =
 pub const FORK_BLOCK_NUMBER: u64 = 18_725_000;
 
 /// Constructs a test config with a single account with 1 ether
-pub fn create_test_config() -> ProviderConfig {
+pub fn create_test_config<HardforkT: HardforkTrait>() -> ProviderConfig<HardforkT> {
     create_test_config_with_fork(None)
 }
 
@@ -42,15 +44,17 @@ pub fn one_ether() -> U256 {
     U256::from(10).pow(U256::from(18))
 }
 
-pub fn create_test_config_with_fork(fork: Option<ForkConfig>) -> ProviderConfig {
+pub fn create_test_config_with_fork<HardforkT: HardforkTrait>(
+    fork: Option<ForkConfig>,
+) -> ProviderConfig<HardforkT> {
     ProviderConfig {
         accounts: vec![
-            AccountConfig {
+            config::OwnedAccount {
                 secret_key: secret_key_from_str(TEST_SECRET_KEY)
                     .expect("should construct secret key from string"),
                 balance: one_ether(),
             },
-            AccountConfig {
+            config::OwnedAccount {
                 secret_key: secret_key_from_str(TEST_SECRET_KEY_SIGN_TYPED_DATA_V4)
                     .expect("should construct secret key from string"),
                 balance: one_ether(),
@@ -67,8 +71,8 @@ pub fn create_test_config_with_fork(fork: Option<ForkConfig>) -> ProviderConfig 
         coinbase: Address::from(U160::from(1)),
         enable_rip_7212: false,
         fork,
-        genesis_accounts: HashMap::new(),
-        hardfork: SpecId::LATEST,
+        genesis_state: HashMap::new(),
+        hardfork: HardforkT::default(),
         initial_base_fee_per_gas: Some(U256::from(1000000000)),
         initial_blob_gas: Some(BlobGas {
             gas_used: 0,
@@ -77,16 +81,26 @@ pub fn create_test_config_with_fork(fork: Option<ForkConfig>) -> ProviderConfig 
         initial_date: Some(SystemTime::now()),
         initial_parent_beacon_block_root: Some(KECCAK_NULL_RLP),
         min_gas_price: U256::ZERO,
-        mining: MiningConfig::default(),
+        mining: config::Mining::default(),
         network_id: 123,
         cache_dir: edr_defaults::CACHE_DIR.into(),
     }
 }
 
 /// Retrieves the pending base fee per gas from the provider data.
-pub fn pending_base_fee(
-    data: &mut ProviderData<Infallible>,
-) -> Result<U256, ProviderError<Infallible>> {
+pub fn pending_base_fee<
+    ChainSpecT: SyncProviderSpec<
+        TimerT,
+        BlockEnv: Default,
+        SignedTransaction: Default
+                               + TransactionValidation<
+            ValidationError: From<InvalidTransaction> + PartialEq,
+        >,
+    >,
+    TimerT: Clone + TimeSinceEpoch,
+>(
+    data: &mut ProviderData<ChainSpecT, TimerT>,
+) -> Result<U256, ProviderError<ChainSpecT>> {
     let block = data.mine_pending_block()?.block;
 
     let base_fee = block
@@ -99,19 +113,18 @@ pub fn pending_base_fee(
 
 /// Deploys a contract with the provided code. Returns the address of the
 /// contract.
-pub fn deploy_contract<LoggerErrorT, TimerT>(
-    provider: &Provider<LoggerErrorT, TimerT>,
+pub fn deploy_contract<TimerT>(
+    provider: &Provider<L1ChainSpec, TimerT>,
     caller: Address,
     code: Bytes,
 ) -> anyhow::Result<Address>
 where
-    LoggerErrorT: Debug + Send + Sync + 'static,
     TimerT: Clone + TimeSinceEpoch,
 {
-    let deploy_transaction = EthTransactionRequest {
+    let deploy_transaction = TransactionRequest {
         from: caller,
         data: Some(code),
-        ..EthTransactionRequest::default()
+        ..TransactionRequest::default()
     };
 
     let result = provider.handle_request(ProviderRequest::Single(
@@ -124,197 +137,142 @@ where
         MethodInvocation::GetTransactionReceipt(transaction_hash),
     ))?;
 
-    let receipt: BlockReceipt = serde_json::from_value(result.result)?;
+    let receipt: edr_rpc_eth::receipt::Block = serde_json::from_value(result.result)?;
     let contract_address = receipt.contract_address.expect("Call must create contract");
 
     Ok(contract_address)
 }
 
-/// Runs a full remote block, asserting that the mined block matches the remote
-/// block.
-pub async fn run_full_block(url: String, block_number: u64, chain_id: u64) -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Handle::current();
-    let default_config = create_test_config_with_fork(Some(ForkConfig {
-        json_rpc_url: url.clone(),
-        block_number: Some(block_number - 1),
-        http_headers: None,
-    }));
+/// Fixture for testing `ProviderData`.
+pub struct ProviderTestFixture<ChainSpecT: ProviderSpec<CurrentTime>> {
+    _runtime: runtime::Runtime,
+    pub config: ProviderConfig<ChainSpecT::Hardfork>,
+    pub provider_data: ProviderData<ChainSpecT, CurrentTime>,
+    pub impersonated_account: Address,
+}
 
-    let replay_block = {
-        let rpc_client =
-            EthRpcClient::<L1ChainSpec>::new(&url, default_config.cache_dir.clone(), None)?;
-
-        let block = rpc_client
-            .get_block_by_number_with_transaction_data(PreEip1898BlockSpec::Number(block_number))
-            .await?;
-
-        block.into_remote_block(Arc::new(rpc_client), runtime.clone())?
-    };
-
-    let rpc_client =
-        EthRpcClient::<L1ChainSpec>::new(&url, default_config.cache_dir.clone(), None)?;
-    let mut irregular_state = IrregularState::default();
-    let state_root_generator = Arc::new(parking_lot::Mutex::new(RandomHashGenerator::with_seed(
-        edr_defaults::STATE_ROOT_HASH_SEED,
-    )));
-    let hardfork_activation_overrides = HashMap::new();
-
-    let hardfork_activations =
-        chain_hardfork_activations(chain_id).ok_or(anyhow!("Unsupported chain id"))?;
-
-    let spec_id = hardfork_activations
-        .hardfork_at_block_number(block_number)
-        .ok_or(anyhow!("Unsupported block number"))?;
-
-    let blockchain = ForkedBlockchain::new(
-        runtime.clone(),
-        Some(chain_id),
-        spec_id,
-        Arc::new(rpc_client),
-        Some(block_number - 1),
-        &mut irregular_state,
-        state_root_generator,
-        &hardfork_activation_overrides,
-    )
-    .await?;
-
-    let mut cfg = CfgEnv::default();
-    cfg.chain_id = chain_id;
-    cfg.disable_eip3607 = true;
-
-    let cfg = CfgEnvWithHandlerCfg::new_with_spec_id(cfg, spec_id);
-
-    let parent = blockchain.last_block()?;
-    let replay_header = replay_block.header();
-
-    let mut builder = BlockBuilder::new(
-        cfg,
-        &parent,
-        BlockOptions {
-            beneficiary: Some(replay_header.beneficiary),
-            gas_limit: Some(replay_header.gas_limit),
-            extra_data: Some(replay_header.extra_data.clone()),
-            mix_hash: Some(replay_header.mix_hash),
-            nonce: Some(replay_header.nonce),
-            parent_beacon_block_root: replay_header.parent_beacon_block_root,
-            state_root: Some(replay_header.state_root),
-            timestamp: Some(replay_header.timestamp),
-            withdrawals: replay_block.withdrawals().map(<[Withdrawal]>::to_vec),
-            ..BlockOptions::default()
-        },
-        None,
-    )?;
-
-    let mut state =
-        blockchain.state_at_block_number(block_number - 1, irregular_state.state_overrides())?;
-
-    for transaction in replay_block.transactions() {
-        let debug_context: Option<DebugContext<'_, L1ChainSpec, _, (), _>> = None;
-        let ExecutionResultWithContext {
-            result,
-            evm_context: _,
-        } = builder.add_transaction(&blockchain, &mut state, transaction.clone(), debug_context);
-
-        result?;
+impl<ChainSpecT: Debug + SyncProviderSpec<CurrentTime>> ProviderTestFixture<ChainSpecT> {
+    /// Creates a new `ProviderTestFixture` with a local provider.
+    pub fn new_local() -> anyhow::Result<Self> {
+        Self::with_fork(None)
     }
 
-    let rewards = vec![(
-        replay_header.beneficiary,
-        miner_reward(spec_id).unwrap_or(U256::ZERO),
-    )];
-    let mined_block = builder.finalize(&mut state, rewards)?;
+    /// Creates a new `ProviderTestFixture` with a forked provider.
+    pub fn new_forked(url: Option<String>) -> anyhow::Result<Self> {
+        use edr_test_utils::env::get_alchemy_url;
 
-    let mined_header = mined_block.block.header();
-    for (expected, actual) in replay_block
-        .transaction_receipts()?
-        .into_iter()
-        .zip(mined_block.block.transaction_receipts().iter())
-    {
-        debug_assert_eq!(
-            expected.block_number,
-            actual.block_number,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.transaction_hash,
-            actual.transaction_hash,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.transaction_index,
-            actual.transaction_index,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.from,
-            actual.from,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.to,
-            actual.to,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.contract_address,
-            actual.contract_address,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.gas_used,
-            actual.gas_used,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.effective_gas_price,
-            actual.effective_gas_price,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        debug_assert_eq!(
-            expected.cumulative_gas_used,
-            actual.cumulative_gas_used,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
-        if expected.logs_bloom != actual.logs_bloom {
-            for (expected, actual) in expected.logs.iter().zip(actual.logs.iter()) {
-                debug_assert_eq!(
-                    expected.inner.address,
-                    actual.inner.address,
-                    "{:?}",
-                    replay_block.transactions()[expected.transaction_index as usize]
-                );
-                debug_assert_eq!(
-                    expected.inner.topics(),
-                    actual.inner.topics(),
-                    "{:?}",
-                    replay_block.transactions()[expected.transaction_index as usize]
-                );
-                debug_assert_eq!(
-                    expected.inner.data.data,
-                    actual.inner.data.data,
-                    "{:?}",
-                    replay_block.transactions()[expected.transaction_index as usize]
-                );
+        let fork_url = url.unwrap_or(get_alchemy_url());
+        Self::with_fork(Some(fork_url))
+    }
+
+    fn with_fork(fork: Option<String>) -> anyhow::Result<Self> {
+        let fork = fork.map(|json_rpc_url| {
+            ForkConfig {
+                json_rpc_url,
+                // Random recent block for better cache consistency
+                block_number: Some(FORK_BLOCK_NUMBER),
+                http_headers: None,
             }
-        }
-        debug_assert_eq!(
-            expected.data,
-            actual.data,
-            "{:?}",
-            replay_block.transactions()[expected.transaction_index as usize]
-        );
+        });
+
+        let config = create_test_config_with_fork(fork);
+
+        let runtime = runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .thread_name("provider-data-test")
+            .build()?;
+
+        Self::new(runtime, config)
     }
 
-    assert_eq!(mined_header, replay_header);
+    pub fn new(
+        runtime: tokio::runtime::Runtime,
+        mut config: ProviderConfig<ChainSpecT::Hardfork>,
+    ) -> anyhow::Result<Self> {
+        let logger = Box::<NoopLogger<ChainSpecT>>::default();
+        let subscription_callback_noop = Box::new(|_| ());
 
-    Ok(())
+        let impersonated_account = Address::random();
+        config.genesis_state.insert(
+            impersonated_account,
+            AccountInfo {
+                balance: one_ether(),
+                nonce: 0,
+                code: None,
+                code_hash: KECCAK_EMPTY,
+            }
+            .into(),
+        );
+
+        let mut provider_data = ProviderData::<ChainSpecT>::new(
+            runtime.handle().clone(),
+            logger,
+            subscription_callback_noop,
+            None,
+            config.clone(),
+            Arc::<ContractDecoder>::default(),
+            CurrentTime,
+        )?;
+
+        provider_data.impersonate_account(impersonated_account);
+
+        Ok(Self {
+            _runtime: runtime,
+            config,
+            provider_data,
+            impersonated_account,
+        })
+    }
+
+    /// Retrieves the nth local account.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are not enough local accounts
+    pub fn nth_local_account(&self, index: usize) -> anyhow::Result<Address> {
+        self.provider_data
+            .accounts()
+            .nth(index)
+            .copied()
+            .ok_or(anyhow!("the requested local account does not exist"))
+    }
+}
+
+impl ProviderTestFixture<L1ChainSpec> {
+    pub fn dummy_transaction_request(
+        &self,
+        local_account_index: usize,
+        gas_limit: u64,
+        nonce: Option<u64>,
+    ) -> anyhow::Result<TransactionRequestAndSender<transaction::Request>> {
+        let request = transaction::Request::Eip155(transaction::request::Eip155 {
+            kind: TxKind::Call(Address::ZERO),
+            gas_limit,
+            gas_price: U256::from(42_000_000_000_u64),
+            value: U256::from(1),
+            input: Bytes::default(),
+            nonce: nonce.unwrap_or(0),
+            chain_id: self.config.chain_id,
+        });
+
+        let sender = self.nth_local_account(local_account_index)?;
+        Ok(TransactionRequestAndSender { request, sender })
+    }
+
+    pub fn impersonated_dummy_transaction(&self) -> anyhow::Result<transaction::Signed> {
+        let mut transaction = self.dummy_transaction_request(0, 30_000, None)?;
+        transaction.sender = self.impersonated_account;
+
+        Ok(self.provider_data.sign_transaction_request(transaction)?)
+    }
+
+    pub fn signed_dummy_transaction(
+        &self,
+        local_account_index: usize,
+        nonce: Option<u64>,
+    ) -> anyhow::Result<transaction::Signed> {
+        let transaction = self.dummy_transaction_request(local_account_index, 30_000, nonce)?;
+        Ok(self.provider_data.sign_transaction_request(transaction)?)
+    }
 }

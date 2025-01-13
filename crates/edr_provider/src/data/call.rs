@@ -1,38 +1,47 @@
-use core::fmt::Debug;
-
 use edr_eth::{
-    block::{BlobGas, Header},
-    Address, HashMap, SpecId, U256,
+    block::Header,
+    result::{ExecutionResult, InvalidTransaction},
+    transaction::TransactionValidation,
+    Address, HashMap, U256,
 };
 use edr_evm::{
-    blockchain::{BlockchainError, SyncBlockchain},
-    chain_spec::L1ChainSpec,
+    blockchain::{BlockchainErrorForChainSpec, SyncBlockchain},
+    config::CfgEnv,
     guaranteed_dry_run,
+    precompile::Precompile,
+    spec::{BlockEnvConstructor as _, RuntimeSpec, SyncRuntimeSpec},
     state::{StateError, StateOverrides, StateRefOverrider, SyncState},
-    BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, DebugContext, ExecutionResult,
-    Precompile, TxEnv,
+    DebugContext,
 };
 
 use crate::ProviderError;
 
-pub(super) struct RunCallArgs<'a, 'evm, DebugDataT>
-where
+pub(super) struct RunCallArgs<
+    'a,
+    'evm,
+    ChainSpecT: RuntimeSpec<
+        SignedTransaction: TransactionValidation<ValidationError: From<InvalidTransaction>>,
+    >,
+    DebugDataT,
+> where
     'a: 'evm,
 {
-    pub blockchain: &'a dyn SyncBlockchain<L1ChainSpec, BlockchainError, StateError>,
+    pub blockchain:
+        &'a dyn SyncBlockchain<ChainSpecT, BlockchainErrorForChainSpec<ChainSpecT>, StateError>,
     pub header: &'a Header,
     pub state: &'a dyn SyncState<StateError>,
     pub state_overrides: &'a StateOverrides,
-    pub cfg_env: CfgEnvWithHandlerCfg,
-    pub tx_env: TxEnv,
+    pub cfg_env: CfgEnv,
+    pub hardfork: ChainSpecT::Hardfork,
+    pub transaction: ChainSpecT::SignedTransaction,
     pub precompiles: &'a HashMap<Address, Precompile>,
     // `DebugContext` cannot be simplified further
     #[allow(clippy::type_complexity)]
     pub debug_context: Option<
         DebugContext<
             'evm,
-            L1ChainSpec,
-            BlockchainError,
+            ChainSpecT,
+            BlockchainErrorForChainSpec<ChainSpecT>,
             DebugDataT,
             StateRefOverrider<'a, &'evm dyn SyncState<StateError>>,
         >,
@@ -40,11 +49,16 @@ where
 }
 
 /// Execute a transaction as a call. Returns the gas used and the output.
-pub(super) fn run_call<'a, 'evm, DebugDataT, LoggerErrorT: Debug>(
-    args: RunCallArgs<'a, 'evm, DebugDataT>,
-) -> Result<ExecutionResult, ProviderError<LoggerErrorT>>
+pub(super) fn run_call<'a, 'evm, ChainSpecT, DebugDataT>(
+    args: RunCallArgs<'a, 'evm, ChainSpecT, DebugDataT>,
+) -> Result<ExecutionResult<ChainSpecT::HaltReason>, ProviderError<ChainSpecT>>
 where
     'a: 'evm,
+    ChainSpecT: SyncRuntimeSpec<
+        BlockEnv: Default,
+        SignedTransaction: Default
+                               + TransactionValidation<ValidationError: From<InvalidTransaction>>,
+    >,
 {
     let RunCallArgs {
         blockchain,
@@ -52,35 +66,26 @@ where
         state,
         state_overrides,
         cfg_env,
-        tx_env,
+        hardfork,
+        transaction,
         precompiles,
         debug_context,
     } = args;
 
-    let block = BlockEnv {
-        number: U256::from(header.number),
-        coinbase: header.beneficiary,
-        timestamp: U256::from(header.timestamp),
-        gas_limit: U256::from(header.gas_limit),
-        basefee: U256::ZERO,
-        difficulty: header.difficulty,
-        prevrandao: if cfg_env.handler_cfg.spec_id >= SpecId::MERGE {
-            Some(header.mix_hash)
-        } else {
-            None
-        },
-        blob_excess_gas_and_price: header
-            .blob_gas
-            .as_ref()
-            .map(|BlobGas { excess_gas, .. }| BlobExcessGasAndPrice::new(*excess_gas)),
-    };
+    // `eth_call` uses a base fee of zero to mimick geth's behavior
+    let mut header = header.clone();
+    header.base_fee_per_gas = header.base_fee_per_gas.map(|_| U256::ZERO);
+
+    let block = ChainSpecT::BlockEnv::new_block_env(&header, hardfork.into());
+
+    let state_overrider = StateRefOverrider::new(state_overrides, state);
 
     guaranteed_dry_run(
         blockchain,
-        state,
-        state_overrides,
+        state_overrider,
         cfg_env,
-        tx_env,
+        hardfork,
+        transaction,
         block,
         precompiles,
         debug_context,

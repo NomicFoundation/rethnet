@@ -7,7 +7,8 @@
 
 use std::sync::Arc;
 
-use edr_evm::{interpreter::OpCode, trace::BeforeMessage};
+use edr_eth::{bytecode::opcode::OpCode, result::HaltReason};
+use edr_evm::trace::BeforeMessage;
 use napi::{
     bindgen_prelude::{BigInt, Buffer, Either3},
     Env, JsBuffer, JsBufferValue,
@@ -150,7 +151,7 @@ impl TracingStep {
     }
 }
 
-pub(crate) fn u256_to_bigint(v: &edr_evm::U256) -> BigInt {
+pub(crate) fn u256_to_bigint(v: &edr_eth::U256) -> BigInt {
     BigInt {
         sign_bit: false,
         words: v.into_limbs().to_vec(),
@@ -165,13 +166,14 @@ pub struct TracingMessageResult {
 }
 
 #[napi]
+#[derive(Clone)]
 pub struct RawTrace {
-    pub(crate) inner: Arc<edr_evm::trace::Trace>,
+    inner: Arc<edr_evm::trace::Trace<HaltReason>>,
 }
 
-impl RawTrace {
-    pub fn new(inner: Arc<edr_evm::trace::Trace>) -> Self {
-        Self { inner }
+impl From<Arc<edr_evm::trace::Trace<HaltReason>>> for RawTrace {
+    fn from(value: Arc<edr_evm::trace::Trace<HaltReason>>) -> Self {
+        Self { inner: value }
     }
 }
 

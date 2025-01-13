@@ -5,9 +5,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0.75", default-features = false }
-alloy-dyn-abi = { version = "0.7.6", default-features = false, features = ["eip712"] }
+alloy-dyn-abi = { version = "0.7.6", default-features = false, features = ["eip712", "std"] }
 alloy-json-abi = { version = "0.7.4", default-features = false }
 alloy-sol-types = { version = "0.7.4", default-features = false, features = ["std"] }
+derive-where = { version = "1.2.7", default-features = false }
 edr_eth = { version = "0.3.5", path = "../edr_eth" }
 edr_evm = { version = "0.3.5", path = "../edr_evm" }
 indexmap = { version = "2", features = ["serde"] }

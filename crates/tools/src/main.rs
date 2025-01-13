@@ -9,6 +9,7 @@ mod remote_block;
 mod scenario;
 mod update;
 
+use remote_block::SupportedChainTypes;
 use update::Mode;
 
 // Matches `edr_napi`. Important for scenarios.
@@ -45,15 +46,14 @@ enum Command {
     GenExecutionApi,
     /// Replays a block from a remote node and compares it to the mined block.
     ReplayBlock {
+        #[clap(long, short, value_enum)]
+        chain_type: SupportedChainTypes,
         /// The URL of the remote node
         #[clap(long, short)]
         url: String,
         /// The block number to replay
         #[clap(long, short)]
         block_number: Option<u64>,
-        /// The chain ID
-        #[clap(long, short)]
-        chain_id: u64,
     },
     /// Execute a benchmark scenario and report statistics
     Scenario {
@@ -80,10 +80,10 @@ async fn main() -> anyhow::Result<()> {
         } => benchmark::run(working_directory, &test_command, iterations),
         Command::GenExecutionApi => execution_api::generate(Mode::Overwrite),
         Command::ReplayBlock {
+            chain_type,
             url,
             block_number,
-            chain_id,
-        } => remote_block::replay(url, block_number, chain_id).await,
+        } => remote_block::replay(chain_type, url, block_number).await,
         Command::Scenario { path, count } => scenario::execute(&path, count).await,
     }
 }

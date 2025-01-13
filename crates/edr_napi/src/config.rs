@@ -1,70 +1,339 @@
+use std::{
+    num::NonZeroU64,
+    time::{Duration, SystemTime},
+};
+
+use edr_eth::KECCAK_EMPTY;
+use napi::{
+    bindgen_prelude::{BigInt, Buffer},
+    Either,
+};
 use napi_derive::napi;
 
-/// Identifier for the Ethereum spec.
-#[napi]
-pub enum SpecId {
-    /// Frontier
-    Frontier = 0,
-    /// Frontier Thawing
-    FrontierThawing = 1,
-    /// Homestead
-    Homestead = 2,
-    /// DAO Fork
-    DaoFork = 3,
-    /// Tangerine
-    Tangerine = 4,
-    /// Spurious Dragon
-    SpuriousDragon = 5,
-    /// Byzantium
-    Byzantium = 6,
-    /// Constantinople
-    Constantinople = 7,
-    /// Petersburg
-    Petersburg = 8,
-    /// Istanbul
-    Istanbul = 9,
-    /// Muir Glacier
-    MuirGlacier = 10,
-    /// Berlin
-    Berlin = 11,
-    /// London
-    London = 12,
-    /// Arrow Glacier
-    ArrowGlacier = 13,
-    /// Gray Glacier
-    GrayGlacier = 14,
-    /// Merge
-    Merge = 15,
-    /// Shanghai
-    Shanghai = 16,
-    /// Cancun
-    Cancun = 17,
-    /// Latest
-    Latest = 18,
+use crate::{
+    account::{Account, OwnedAccount, StorageSlot},
+    block::BlobGas,
+    cast::TryCast,
+};
+
+/// Configuration for a chain
+#[napi(object)]
+pub struct ChainConfig {
+    /// The chain ID
+    pub chain_id: BigInt,
+    /// The chain's supported hardforks
+    pub hardforks: Vec<HardforkActivation>,
 }
 
-impl From<SpecId> for edr_evm::SpecId {
-    fn from(value: SpecId) -> Self {
-        match value {
-            SpecId::Frontier => edr_evm::SpecId::FRONTIER,
-            SpecId::FrontierThawing => edr_evm::SpecId::FRONTIER_THAWING,
-            SpecId::Homestead => edr_evm::SpecId::HOMESTEAD,
-            SpecId::DaoFork => edr_evm::SpecId::DAO_FORK,
-            SpecId::Tangerine => edr_evm::SpecId::TANGERINE,
-            SpecId::SpuriousDragon => edr_evm::SpecId::SPURIOUS_DRAGON,
-            SpecId::Byzantium => edr_evm::SpecId::BYZANTIUM,
-            SpecId::Constantinople => edr_evm::SpecId::CONSTANTINOPLE,
-            SpecId::Petersburg => edr_evm::SpecId::PETERSBURG,
-            SpecId::Istanbul => edr_evm::SpecId::ISTANBUL,
-            SpecId::MuirGlacier => edr_evm::SpecId::MUIR_GLACIER,
-            SpecId::Berlin => edr_evm::SpecId::BERLIN,
-            SpecId::London => edr_evm::SpecId::LONDON,
-            SpecId::ArrowGlacier => edr_evm::SpecId::ARROW_GLACIER,
-            SpecId::GrayGlacier => edr_evm::SpecId::GRAY_GLACIER,
-            SpecId::Merge => edr_evm::SpecId::MERGE,
-            SpecId::Shanghai => edr_evm::SpecId::SHANGHAI,
-            SpecId::Cancun => edr_evm::SpecId::CANCUN,
-            SpecId::Latest => edr_evm::SpecId::LATEST,
+/// Configuration for forking a blockchain
+#[napi(object)]
+pub struct ForkConfig {
+    /// The URL of the JSON-RPC endpoint to fork from
+    pub json_rpc_url: String,
+    /// The block number to fork from. If not provided, the latest safe block is
+    /// used.
+    pub block_number: Option<BigInt>,
+    /// The HTTP headers to use when making requests to the JSON-RPC endpoint
+    pub http_headers: Option<Vec<HttpHeader>>,
+}
+
+#[napi(object)]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// Configuration for a hardfork activation
+#[napi(object)]
+pub struct HardforkActivation {
+    /// The block number at which the hardfork is activated
+    pub block_number: BigInt,
+    /// The activated hardfork
+    pub spec_id: String,
+}
+
+#[napi(string_enum)]
+#[doc = "The type of ordering to use when selecting blocks to mine."]
+pub enum MineOrdering {
+    #[doc = "Insertion order"]
+    Fifo,
+    #[doc = "Effective miner fee"]
+    Priority,
+}
+
+/// Configuration for the provider's mempool.
+#[napi(object)]
+pub struct MemPoolConfig {
+    pub order: MineOrdering,
+}
+
+#[napi(object)]
+pub struct IntervalRange {
+    pub min: BigInt,
+    pub max: BigInt,
+}
+
+/// Configuration for the provider's miner.
+#[napi(object)]
+pub struct MiningConfig {
+    pub auto_mine: bool,
+    pub interval: Option<Either<BigInt, IntervalRange>>,
+    pub mem_pool: MemPoolConfig,
+}
+
+/// Configuration for a provider
+#[napi(object)]
+pub struct ProviderConfig {
+    /// Whether to allow blocks with the same timestamp
+    pub allow_blocks_with_same_timestamp: bool,
+    /// Whether to allow unlimited contract size
+    pub allow_unlimited_contract_size: bool,
+    /// Whether to return an `Err` when `eth_call` fails
+    pub bail_on_call_failure: bool,
+    /// Whether to return an `Err` when a `eth_sendTransaction` fails
+    pub bail_on_transaction_failure: bool,
+    /// The gas limit of each block
+    pub block_gas_limit: BigInt,
+    /// The directory to cache remote JSON-RPC responses
+    pub cache_dir: Option<String>,
+    /// The chain ID of the blockchain
+    pub chain_id: BigInt,
+    /// The configuration for chains
+    pub chains: Vec<ChainConfig>,
+    /// The address of the coinbase
+    pub coinbase: Buffer,
+    /// Enables RIP-7212
+    pub enable_rip_7212: bool,
+    /// The configuration for forking a blockchain. If not provided, a local
+    /// blockchain will be created
+    pub fork: Option<ForkConfig>,
+    /// The genesis state of the blockchain
+    pub genesis_state: Vec<Account>,
+    /// The hardfork of the blockchain
+    pub hardfork: String,
+    /// The initial base fee per gas of the blockchain. Required for EIP-1559
+    /// transactions and later
+    pub initial_base_fee_per_gas: Option<BigInt>,
+    /// The initial blob gas of the blockchain. Required for EIP-4844
+    pub initial_blob_gas: Option<BlobGas>,
+    /// The initial date of the blockchain, in seconds since the Unix epoch
+    pub initial_date: Option<BigInt>,
+    /// The initial parent beacon block root of the blockchain. Required for
+    /// EIP-4788
+    pub initial_parent_beacon_block_root: Option<Buffer>,
+    /// The minimum gas price of the next block.
+    pub min_gas_price: BigInt,
+    /// The configuration for the miner
+    pub mining: MiningConfig,
+    /// The network ID of the blockchain
+    pub network_id: BigInt,
+    /// Owned accounts, for which the secret key is known
+    pub owned_accounts: Vec<OwnedAccount>,
+}
+
+impl TryFrom<ForkConfig> for edr_provider::hardhat_rpc_types::ForkConfig {
+    type Error = napi::Error;
+
+    fn try_from(value: ForkConfig) -> Result<Self, Self::Error> {
+        let block_number: Option<u64> = value.block_number.map(TryCast::try_cast).transpose()?;
+        let http_headers = value.http_headers.map(|http_headers| {
+            http_headers
+                .into_iter()
+                .map(|HttpHeader { name, value }| (name, value))
+                .collect()
+        });
+
+        Ok(Self {
+            json_rpc_url: value.json_rpc_url,
+            block_number,
+            http_headers,
+        })
+    }
+}
+
+impl From<MemPoolConfig> for edr_provider::MemPoolConfig {
+    fn from(value: MemPoolConfig) -> Self {
+        Self {
+            order: value.order.into(),
         }
+    }
+}
+
+impl From<MineOrdering> for edr_evm::MineOrdering {
+    fn from(value: MineOrdering) -> Self {
+        match value {
+            MineOrdering::Fifo => Self::Fifo,
+            MineOrdering::Priority => Self::Priority,
+        }
+    }
+}
+
+impl TryFrom<MiningConfig> for edr_provider::MiningConfig {
+    type Error = napi::Error;
+
+    fn try_from(value: MiningConfig) -> Result<Self, Self::Error> {
+        let mem_pool = value.mem_pool.into();
+
+        let interval = value
+            .interval
+            .map(|interval| {
+                let interval = match interval {
+                    Either::A(interval) => {
+                        let interval = interval.try_cast()?;
+                        let interval = NonZeroU64::new(interval).ok_or_else(|| {
+                            napi::Error::new(
+                                napi::Status::GenericFailure,
+                                "Interval must be greater than 0",
+                            )
+                        })?;
+
+                        edr_provider::IntervalConfig::Fixed(interval)
+                    }
+                    Either::B(IntervalRange { min, max }) => edr_provider::IntervalConfig::Range {
+                        min: min.try_cast()?,
+                        max: max.try_cast()?,
+                    },
+                };
+
+                napi::Result::Ok(interval)
+            })
+            .transpose()?;
+
+        Ok(Self {
+            auto_mine: value.auto_mine,
+            interval,
+            mem_pool,
+        })
+    }
+}
+
+impl TryFrom<ProviderConfig> for edr_napi_core::provider::Config {
+    type Error = napi::Error;
+
+    fn try_from(value: ProviderConfig) -> Result<Self, Self::Error> {
+        let accounts = value
+            .owned_accounts
+            .into_iter()
+            .map(edr_provider::config::OwnedAccount::try_from)
+            .collect::<napi::Result<Vec<_>>>()?;
+
+        let block_gas_limit =
+            NonZeroU64::new(value.block_gas_limit.try_cast()?).ok_or_else(|| {
+                napi::Error::new(
+                    napi::Status::GenericFailure,
+                    "Block gas limit must be greater than 0",
+                )
+            })?;
+
+        let chains = value
+            .chains
+            .into_iter()
+            .map(
+                |ChainConfig {
+                     chain_id,
+                     hardforks,
+                 }| {
+                    let hardforks = hardforks
+                        .into_iter()
+                        .map(
+                            |HardforkActivation {
+                                 block_number,
+                                 spec_id: hardfork,
+                             }| {
+                                let block_number = block_number.try_cast()?;
+
+                                Ok(edr_napi_core::provider::HardforkActivation {
+                                    block_number,
+                                    hardfork,
+                                })
+                            },
+                        )
+                        .collect::<napi::Result<Vec<_>>>()?;
+
+                    let chain_id = chain_id.try_cast()?;
+                    Ok((chain_id, hardforks))
+                },
+            )
+            .collect::<napi::Result<_>>()?;
+
+        let genesis_state = value
+            .genesis_state
+            .into_iter()
+            .map(
+                |Account {
+                     address,
+                     balance,
+                     nonce,
+                     code,
+                     storage,
+                 }| {
+                    let code: Option<edr_eth::Bytecode> =
+                        code.map(TryCast::try_cast).transpose()?;
+
+                    let code_hash = code
+                        .as_ref()
+                        .map_or(KECCAK_EMPTY, edr_eth::Bytecode::hash_slow);
+
+                    let info = edr_eth::account::AccountInfo {
+                        balance: balance.try_cast()?,
+                        nonce: nonce.try_cast()?,
+                        code_hash,
+                        code,
+                    };
+
+                    let storage = storage
+                        .into_iter()
+                        .map(|StorageSlot { index, value }| {
+                            let value = value.try_cast()?;
+                            let slot = edr_evm::state::EvmStorageSlot::new(value);
+
+                            let index: edr_eth::U256 = index.try_cast()?;
+                            Ok((index, slot))
+                        })
+                        .collect::<napi::Result<_>>()?;
+
+                    let address: edr_eth::Address = address.try_cast()?;
+                    let account = edr_provider::config::Account { info, storage };
+
+                    Ok((address, account))
+                },
+            )
+            .collect::<napi::Result<_>>()?;
+
+        Ok(Self {
+            accounts,
+            allow_blocks_with_same_timestamp: value.allow_blocks_with_same_timestamp,
+            allow_unlimited_contract_size: value.allow_unlimited_contract_size,
+            bail_on_call_failure: value.bail_on_call_failure,
+            bail_on_transaction_failure: value.bail_on_transaction_failure,
+            block_gas_limit,
+            cache_dir: value.cache_dir,
+            chain_id: value.chain_id.try_cast()?,
+            chains,
+            coinbase: value.coinbase.try_cast()?,
+            enable_rip_7212: value.enable_rip_7212,
+            fork: value.fork.map(TryInto::try_into).transpose()?,
+            genesis_state,
+            hardfork: value.hardfork,
+            initial_base_fee_per_gas: value
+                .initial_base_fee_per_gas
+                .map(TryCast::try_cast)
+                .transpose()?,
+            initial_blob_gas: value.initial_blob_gas.map(TryInto::try_into).transpose()?,
+            initial_date: value
+                .initial_date
+                .map(|date| {
+                    let elapsed_since_epoch = Duration::from_secs(date.try_cast()?);
+                    napi::Result::Ok(SystemTime::UNIX_EPOCH + elapsed_since_epoch)
+                })
+                .transpose()?,
+            initial_parent_beacon_block_root: value
+                .initial_parent_beacon_block_root
+                .map(TryCast::try_cast)
+                .transpose()?,
+            mining: value.mining.try_into()?,
+            min_gas_price: value.min_gas_price.try_cast()?,
+            network_id: value.network_id.try_cast()?,
+        })
     }
 }

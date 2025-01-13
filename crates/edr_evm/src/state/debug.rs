@@ -1,8 +1,7 @@
 use std::{fmt::Debug, ops::Deref};
 
 use auto_impl::auto_impl;
-use edr_eth::{Address, B256, U256};
-use revm::primitives::{AccountInfo, Bytecode};
+use edr_eth::{account::AccountInfo, Address, Bytecode, B256, U256};
 
 type BoxedAccountModifierFn = Box<dyn Fn(&mut U256, &mut u64, &mut Option<Bytecode>) + Send>;
 

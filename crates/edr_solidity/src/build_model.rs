@@ -16,7 +16,7 @@ use std::{
 };
 
 use alloy_dyn_abi::ErrorExt;
-use edr_evm::{hex, interpreter::OpCode};
+use edr_eth::{bytecode::opcode::OpCode, hex};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
 use serde::Serialize;

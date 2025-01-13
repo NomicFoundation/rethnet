@@ -1,6 +1,6 @@
 //! Generates JS-style stack traces for Solidity errors.
 
-use edr_evm::interpreter::OpCode;
+use edr_eth::{bytecode::opcode::OpCode, spec::HaltReasonTrait};
 
 use crate::{
     build_model::{ContractMetadataError, Instruction, JumpType},
@@ -18,20 +18,22 @@ use crate::{
 
 /// Errors that can occur during the generation of the stack trace.
 #[derive(Debug, thiserror::Error)]
-pub enum SolidityTracerError {
+pub enum SolidityTracerError<HaltReasonT: HaltReasonTrait> {
     /// Errors that can occur when decoding the contract metadata.
     #[error(transparent)]
     ContractMetadata(#[from] ContractMetadataError),
     /// Errors that can occur during the inference of the stack trace.
     #[error(transparent)]
-    ErrorInferrer(#[from] InferrerError),
+    ErrorInferrer(#[from] InferrerError<HaltReasonT>),
     /// Errors that can occur during the heuristics.
     #[error(transparent)]
     Heuristics(#[from] HeuristicsError),
 }
 
 /// Generates a stack trace for the provided nested trace.
-pub fn get_stack_trace(trace: NestedTrace) -> Result<Vec<StackTraceEntry>, SolidityTracerError> {
+pub fn get_stack_trace<HaltReasonT: HaltReasonTrait>(
+    trace: NestedTrace<HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, SolidityTracerError<HaltReasonT>> {
     if !trace.exit_code().is_error() {
         return Ok(Vec::default());
     }
@@ -54,7 +56,9 @@ pub fn get_stack_trace(trace: NestedTrace) -> Result<Vec<StackTraceEntry>, Solid
     }
 }
 
-fn get_last_subtrace(trace: CreateOrCallMessageRef<'_>) -> Option<NestedTrace> {
+fn get_last_subtrace<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Option<NestedTrace<HaltReasonT>> {
     if trace.number_of_subtraces() == 0 {
         return None;
     }
@@ -72,17 +76,17 @@ fn get_last_subtrace(trace: CreateOrCallMessageRef<'_>) -> Option<NestedTrace> {
         })
 }
 
-fn get_precompile_message_stack_trace(
-    trace: &PrecompileMessage,
-) -> Result<Vec<StackTraceEntry>, SolidityTracerError> {
+fn get_precompile_message_stack_trace<HaltReasonT: HaltReasonTrait>(
+    trace: &PrecompileMessage<HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, SolidityTracerError<HaltReasonT>> {
     Ok(vec![StackTraceEntry::PrecompileError {
         precompile: trace.precompile,
     }])
 }
 
-fn get_create_message_stack_trace(
-    trace: CreateMessage,
-) -> Result<Vec<StackTraceEntry>, SolidityTracerError> {
+fn get_create_message_stack_trace<HaltReasonT: HaltReasonTrait>(
+    trace: CreateMessage<HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, SolidityTracerError<HaltReasonT>> {
     let inferred_error = error_inferrer::infer_before_tracing_create_message(&trace)?;
 
     if let Some(inferred_error) = inferred_error {
@@ -92,9 +96,9 @@ fn get_create_message_stack_trace(
     trace_evm_execution(trace.into())
 }
 
-fn get_call_message_stack_trace(
-    trace: CallMessage,
-) -> Result<Vec<StackTraceEntry>, SolidityTracerError> {
+fn get_call_message_stack_trace<HaltReasonT: HaltReasonTrait>(
+    trace: CallMessage<HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, SolidityTracerError<HaltReasonT>> {
     let inferred_error = error_inferrer::infer_before_tracing_call_message(&trace)?;
 
     if let Some(inferred_error) = inferred_error {
@@ -104,9 +108,9 @@ fn get_call_message_stack_trace(
     trace_evm_execution(trace.into())
 }
 
-fn get_unrecognized_message_stack_trace(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<Vec<StackTraceEntry>, SolidityTracerError> {
+fn get_unrecognized_message_stack_trace<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, SolidityTracerError<HaltReasonT>> {
     let trace_exit_kind = trace.exit_code();
     let trace_return_data = trace.return_data();
 
@@ -166,9 +170,9 @@ fn get_unrecognized_message_stack_trace(
     }
 }
 
-fn trace_evm_execution(
-    trace: CreateOrCallMessage,
-) -> Result<Vec<StackTraceEntry>, SolidityTracerError> {
+fn trace_evm_execution<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessage<HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, SolidityTracerError<HaltReasonT>> {
     let stack_trace = raw_trace_evm_execution(CreateOrCallMessageRef::from(&trace))?;
 
     if stack_trace_may_require_adjustments(&stack_trace, CreateOrCallMessageRef::from(&trace))? {
@@ -179,9 +183,9 @@ fn trace_evm_execution(
     Ok(stack_trace)
 }
 
-fn raw_trace_evm_execution(
-    trace: CreateOrCallMessageRef<'_>,
-) -> Result<Vec<StackTraceEntry>, SolidityTracerError> {
+fn raw_trace_evm_execution<HaltReasonT: HaltReasonTrait>(
+    trace: CreateOrCallMessageRef<'_, HaltReasonT>,
+) -> Result<Vec<StackTraceEntry>, SolidityTracerError<HaltReasonT>> {
     let contract_meta = trace
         .contract_meta()
         .ok_or(InferrerError::MissingContract)?;
@@ -197,7 +201,7 @@ fn raw_trace_evm_execution(
 
     let mut function_jumpdests: Vec<&Instruction> = Vec::default();
 
-    let mut last_submessage_data: Option<SubmessageData> = None;
+    let mut last_submessage_data: Option<SubmessageData<HaltReasonT>> = None;
 
     let mut iter = steps.iter().enumerate().peekable();
     while let Some((step_index, step)) = iter.next() {

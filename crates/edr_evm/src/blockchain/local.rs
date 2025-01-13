@@ -2,31 +2,31 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     num::NonZeroU64,
-    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use derive_where::derive_where;
 use edr_eth::{
-    beacon::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_BYTECODE},
     block::{BlobGas, BlockOptions, PartialHeader},
+    l1,
     log::FilterLog,
-    AccountInfo, Address, Bytes, B256, U256,
-};
-use revm::{
-    db::BlockHashRef,
-    primitives::{Bytecode, HashSet, SpecId},
-    DatabaseCommit,
+    Address, Bytes, HashSet, B256, U256,
 };
 
 use super::{
-    compute_state_at_block, storage::ReservableSparseBlockchainStorage, validate_next_block,
-    Blockchain, BlockchainError, BlockchainMut,
+    compute_state_at_block,
+    storage::{ReservableSparseBlockchainStorage, ReservableSparseBlockchainStorageForChainSpec},
+    validate_next_block, BlockHash, Blockchain, BlockchainError, BlockchainErrorForChainSpec,
+    BlockchainMut,
 };
 use crate::{
-    chain_spec::SyncChainSpec,
-    state::{StateDebug, StateDiff, StateError, StateOverride, SyncState, TrieState},
-    Block, BlockAndTotalDifficulty, LocalBlock, SyncBlock,
+    block::EmptyBlock as _,
+    spec::SyncRuntimeSpec,
+    state::{
+        StateCommit as _, StateDebug, StateDiff, StateError, StateOverride, SyncState, TrieState,
+    },
+    Block as _, BlockAndTotalDifficulty, BlockAndTotalDifficultyForChainSpec, BlockReceipts,
 };
 
 /// An error that occurs upon creation of a [`LocalBlockchain`].
@@ -75,56 +75,42 @@ impl From<GenesisBlockOptions> for BlockOptions {
 }
 
 /// A blockchain consisting of locally created blocks.
-#[derive(Debug)]
+#[derive_where(Debug; ChainSpecT::Hardfork)]
 pub struct LocalBlockchain<ChainSpecT>
 where
-    ChainSpecT: SyncChainSpec,
+    ChainSpecT: SyncRuntimeSpec,
 {
-    storage: ReservableSparseBlockchainStorage<
-        Arc<dyn SyncBlock<ChainSpecT, Error = BlockchainError>>,
-        ChainSpecT,
-    >,
+    storage: ReservableSparseBlockchainStorageForChainSpec<ChainSpecT>,
     chain_id: u64,
-    spec_id: SpecId,
+    hardfork: ChainSpecT::Hardfork,
 }
 
 impl<ChainSpecT> LocalBlockchain<ChainSpecT>
 where
-    ChainSpecT: SyncChainSpec,
+    ChainSpecT: SyncRuntimeSpec<
+        LocalBlock: BlockReceipts<
+            Arc<ChainSpecT::BlockReceipt>,
+            Error = BlockchainErrorForChainSpec<ChainSpecT>,
+        >,
+    >,
 {
     /// Constructs a new instance using the provided arguments to build a
     /// genesis block.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        mut genesis_diff: StateDiff,
+        genesis_diff: StateDiff,
         chain_id: u64,
-        spec_id: SpecId,
+        hardfork: ChainSpecT::Hardfork,
         options: GenesisBlockOptions,
     ) -> Result<Self, CreationError> {
         const EXTRA_DATA: &[u8] = b"\x12\x34";
 
-        if spec_id >= SpecId::CANCUN {
-            let beacon_roots_address =
-                Address::from_str(BEACON_ROOTS_ADDRESS).expect("Is valid address");
-            let beacon_roots_contract = Bytecode::new_raw(
-                Bytes::from_str(BEACON_ROOTS_BYTECODE).expect("Is valid bytecode"),
-            );
-
-            genesis_diff.apply_account_change(
-                beacon_roots_address,
-                AccountInfo {
-                    code_hash: beacon_roots_contract.hash_slow(),
-                    code: Some(beacon_roots_contract),
-                    ..AccountInfo::default()
-                },
-            );
-        }
-
         let mut genesis_state = TrieState::default();
         genesis_state.commit(genesis_diff.clone().into());
 
-        if spec_id >= SpecId::MERGE && options.mix_hash.is_none() {
+        let evm_spec_id = hardfork.into();
+        if evm_spec_id >= l1::SpecId::MERGE && options.mix_hash.is_none() {
             return Err(CreationError::MissingPrevrandao);
         }
 
@@ -146,13 +132,13 @@ where
 
         options.extra_data = Some(Bytes::from(EXTRA_DATA));
 
-        let partial_header = PartialHeader::new(spec_id, options, None);
+        let partial_header = PartialHeader::new::<ChainSpecT>(hardfork, options, None);
         Ok(unsafe {
             Self::with_genesis_block_unchecked(
-                LocalBlock::empty(spec_id, partial_header),
+                ChainSpecT::LocalBlock::empty(hardfork, partial_header),
                 genesis_diff,
                 chain_id,
-                spec_id,
+                hardfork,
             )
         })
     }
@@ -161,10 +147,10 @@ where
     /// zero block number.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
     pub fn with_genesis_block(
-        genesis_block: LocalBlock<ChainSpecT>,
+        genesis_block: ChainSpecT::LocalBlock,
         genesis_diff: StateDiff,
         chain_id: u64,
-        spec_id: SpecId,
+        hardfork: ChainSpecT::Hardfork,
     ) -> Result<Self, InsertBlockError> {
         let genesis_header = genesis_block.header();
 
@@ -175,12 +161,12 @@ where
             });
         }
 
-        if spec_id >= SpecId::SHANGHAI && genesis_header.withdrawals_root.is_none() {
+        if hardfork.into() >= l1::SpecId::SHANGHAI && genesis_header.withdrawals_root.is_none() {
             return Err(InsertBlockError::MissingWithdrawals);
         }
 
         Ok(unsafe {
-            Self::with_genesis_block_unchecked(genesis_block, genesis_diff, chain_id, spec_id)
+            Self::with_genesis_block_unchecked(genesis_block, genesis_diff, chain_id, hardfork)
         })
     }
 
@@ -192,17 +178,14 @@ where
     /// Ensure that the genesis block's number is zero.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
     pub unsafe fn with_genesis_block_unchecked(
-        genesis_block: LocalBlock<ChainSpecT>,
+        genesis_block: ChainSpecT::LocalBlock,
         genesis_diff: StateDiff,
         chain_id: u64,
-        spec_id: SpecId,
+        hardfork: ChainSpecT::Hardfork,
     ) -> Self {
-        let genesis_block: Arc<dyn SyncBlock<ChainSpecT, Error = BlockchainError>> =
-            Arc::new(genesis_block);
-
         let total_difficulty = genesis_block.header().difficulty;
         let storage = ReservableSparseBlockchainStorage::with_genesis_block(
-            genesis_block,
+            Arc::new(genesis_block),
             genesis_diff,
             total_difficulty,
         );
@@ -210,16 +193,19 @@ where
         Self {
             storage,
             chain_id,
-            spec_id,
+            hardfork,
         }
     }
 }
 
-impl<ChainSpecT> Blockchain<ChainSpecT> for LocalBlockchain<ChainSpecT>
+impl<ChainSpecT: SyncRuntimeSpec> Blockchain<ChainSpecT> for LocalBlockchain<ChainSpecT>
 where
-    ChainSpecT: SyncChainSpec,
+    ChainSpecT::LocalBlock: BlockReceipts<
+        Arc<ChainSpecT::BlockReceipt>,
+        Error = BlockchainErrorForChainSpec<ChainSpecT>,
+    >,
 {
-    type BlockchainError = BlockchainError;
+    type BlockchainError = BlockchainErrorForChainSpec<ChainSpecT>;
 
     type StateError = StateError;
 
@@ -228,11 +214,10 @@ where
     fn block_by_hash(
         &self,
         hash: &B256,
-    ) -> Result<
-        Option<Arc<dyn SyncBlock<ChainSpecT, Error = Self::BlockchainError>>>,
-        Self::BlockchainError,
-    > {
-        Ok(self.storage.block_by_hash(hash))
+    ) -> Result<Option<Arc<ChainSpecT::Block>>, Self::BlockchainError> {
+        let local_block = self.storage.block_by_hash(hash);
+
+        Ok(local_block.map(ChainSpecT::cast_local_block))
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -240,11 +225,10 @@ where
     fn block_by_number(
         &self,
         number: u64,
-    ) -> Result<
-        Option<Arc<dyn SyncBlock<ChainSpecT, Error = Self::BlockchainError>>>,
-        Self::BlockchainError,
-    > {
-        Ok(self.storage.block_by_number(number)?)
+    ) -> Result<Option<Arc<ChainSpecT::Block>>, Self::BlockchainError> {
+        let local_block = self.storage.block_by_number(number)?;
+
+        Ok(local_block.map(ChainSpecT::cast_local_block))
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -252,11 +236,10 @@ where
     fn block_by_transaction_hash(
         &self,
         transaction_hash: &B256,
-    ) -> Result<
-        Option<Arc<dyn SyncBlock<ChainSpecT, Error = Self::BlockchainError>>>,
-        Self::BlockchainError,
-    > {
-        Ok(self.storage.block_by_transaction_hash(transaction_hash))
+    ) -> Result<Option<Arc<ChainSpecT::Block>>, Self::BlockchainError> {
+        let local_block = self.storage.block_by_transaction_hash(transaction_hash);
+
+        Ok(local_block.map(ChainSpecT::cast_local_block))
     }
 
     fn chain_id(&self) -> u64 {
@@ -264,14 +247,13 @@ where
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    fn last_block(
-        &self,
-    ) -> Result<Arc<dyn SyncBlock<ChainSpecT, Error = Self::BlockchainError>>, Self::BlockchainError>
-    {
-        Ok(self
+    fn last_block(&self) -> Result<Arc<ChainSpecT::Block>, Self::BlockchainError> {
+        let local_block = self
             .storage
             .block_by_number(self.storage.last_block_number())?
-            .expect("Block must exist"))
+            .expect("Block must exist");
+
+        Ok(ChainSpecT::cast_local_block(local_block))
     }
 
     fn last_block_number(&self) -> u64 {
@@ -297,21 +279,24 @@ where
     fn receipt_by_transaction_hash(
         &self,
         transaction_hash: &B256,
-    ) -> Result<Option<Arc<edr_eth::receipt::BlockReceipt>>, Self::BlockchainError> {
+    ) -> Result<Option<Arc<ChainSpecT::BlockReceipt>>, Self::BlockchainError> {
         Ok(self.storage.receipt_by_transaction_hash(transaction_hash))
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    fn spec_at_block_number(&self, block_number: u64) -> Result<SpecId, Self::BlockchainError> {
+    fn spec_at_block_number(
+        &self,
+        block_number: u64,
+    ) -> Result<ChainSpecT::Hardfork, Self::BlockchainError> {
         if block_number > self.last_block_number() {
             return Err(BlockchainError::UnknownBlockNumber);
         }
 
-        Ok(self.spec_id)
+        Ok(self.hardfork)
     }
 
-    fn spec_id(&self) -> SpecId {
-        self.spec_id
+    fn hardfork(&self) -> ChainSpecT::Hardfork {
+        self.hardfork
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -336,24 +321,27 @@ where
     }
 }
 
-impl<ChainSpecT> BlockchainMut<ChainSpecT> for LocalBlockchain<ChainSpecT>
+impl<ChainSpecT: SyncRuntimeSpec> BlockchainMut<ChainSpecT> for LocalBlockchain<ChainSpecT>
 where
-    ChainSpecT: SyncChainSpec,
+    ChainSpecT::LocalBlock: BlockReceipts<
+        Arc<ChainSpecT::BlockReceipt>,
+        Error = BlockchainErrorForChainSpec<ChainSpecT>,
+    >,
 {
-    type Error = BlockchainError;
+    type Error = BlockchainErrorForChainSpec<ChainSpecT>;
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
     fn insert_block(
         &mut self,
-        block: LocalBlock<ChainSpecT>,
+        block: ChainSpecT::LocalBlock,
         state_diff: StateDiff,
-    ) -> Result<BlockAndTotalDifficulty<ChainSpecT, Self::Error>, Self::Error> {
+    ) -> Result<BlockAndTotalDifficultyForChainSpec<ChainSpecT>, Self::Error> {
         let last_block = self.last_block()?;
 
-        validate_next_block(self.spec_id, &last_block, &block)?;
+        validate_next_block::<ChainSpecT>(self.hardfork, &last_block, &block)?;
 
         let previous_total_difficulty = self
-            .total_difficulty_by_hash(last_block.hash())
+            .total_difficulty_by_hash(last_block.block_hash())
             .expect("No error can occur as it is stored locally")
             .expect("Must exist as its block is stored");
 
@@ -361,12 +349,12 @@ where
 
         let block = self
             .storage
-            .insert_block(block, state_diff, total_difficulty)?;
+            .insert_block(Arc::new(block), state_diff, total_difficulty)?;
 
-        Ok(BlockAndTotalDifficulty {
-            block: block.clone(),
-            total_difficulty: Some(total_difficulty),
-        })
+        Ok(BlockAndTotalDifficulty::new(
+            ChainSpecT::cast_local_block(block.clone()),
+            Some(total_difficulty),
+        ))
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
@@ -379,7 +367,7 @@ where
 
         let last_block = self.last_block()?;
         let previous_total_difficulty = self
-            .total_difficulty_by_hash(last_block.hash())?
+            .total_difficulty_by_hash(last_block.block_hash())?
             .expect("Must exist as its block is stored");
 
         let last_header = last_block.header();
@@ -390,7 +378,7 @@ where
             last_header.base_fee_per_gas,
             last_header.state_root,
             previous_total_difficulty,
-            self.spec_id,
+            self.hardfork,
         );
 
         Ok(())
@@ -406,28 +394,28 @@ where
     }
 }
 
-impl<ChainSpecT> BlockHashRef for LocalBlockchain<ChainSpecT>
-where
-    ChainSpecT: SyncChainSpec,
-{
-    type Error = BlockchainError;
+impl<ChainSpecT: SyncRuntimeSpec> BlockHash for LocalBlockchain<ChainSpecT> {
+    type Error = BlockchainErrorForChainSpec<ChainSpecT>;
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-    fn block_hash(&self, number: u64) -> Result<B256, Self::Error> {
+    fn block_hash_by_number(&self, block_number: u64) -> Result<B256, Self::Error> {
         self.storage
-            .block_by_number(number)?
-            .map(|block| *block.hash())
+            .block_by_number(block_number)?
+            .map(|block| *block.block_hash())
             .ok_or(BlockchainError::UnknownBlockNumber)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use edr_eth::{AccountInfo, HashMap};
-    use revm::primitives::{Account, AccountStatus};
+    use edr_eth::{
+        account::{Account, AccountInfo, AccountStatus},
+        l1::L1ChainSpec,
+        HashMap,
+    };
 
     use super::*;
-    use crate::{chain_spec::L1ChainSpec, state::IrregularState};
+    use crate::state::IrregularState;
 
     #[test]
     fn compute_state_after_reserve() -> anyhow::Result<()> {
@@ -458,7 +446,7 @@ mod tests {
         let mut blockchain = LocalBlockchain::<L1ChainSpec>::new(
             genesis_diff,
             123,
-            SpecId::SHANGHAI,
+            l1::SpecId::SHANGHAI,
             GenesisBlockOptions {
                 gas_limit: Some(6_000_000),
                 mix_hash: Some(B256::random()),

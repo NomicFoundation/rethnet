@@ -1,7 +1,7 @@
 //! Utility functions for working with libraries in Solidity.
 //! Ported from `hardhat-network/stack-traces/library-utils.ts`.
 
-use edr_evm::hex;
+use edr_eth::hex;
 
 use crate::artifacts::CompilerOutputBytecode;
 

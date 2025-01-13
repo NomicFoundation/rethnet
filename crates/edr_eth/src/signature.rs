@@ -8,7 +8,8 @@ mod fakeable;
 mod recovery_id;
 mod y_parity;
 
-use k256::{elliptic_curve::sec1::ToEncodedPoint, FieldBytes, PublicKey, SecretKey};
+pub use k256::SecretKey;
+use k256::{elliptic_curve::sec1::ToEncodedPoint, FieldBytes, PublicKey};
 use sha3::{Digest, Keccak256};
 
 pub use self::{recovery_id::SignatureWithRecoveryId, y_parity::SignatureWithYParity};

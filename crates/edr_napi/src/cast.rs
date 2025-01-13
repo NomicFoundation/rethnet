@@ -1,6 +1,6 @@
-use edr_eth::{Address, Bytes, B256, B64, U256};
+use edr_eth::{Address, Bytecode, Bytes, B256, B64, U256};
 use napi::{
-    bindgen_prelude::{BigInt, Buffer},
+    bindgen_prelude::{BigInt, Buffer, Uint8Array},
     Status,
 };
 
@@ -23,6 +23,20 @@ impl TryCast<Address> for Buffer {
             return Err(napi::Error::new(
                 Status::InvalidArg,
                 "Buffer was expected to be 20 bytes.".to_string(),
+            ));
+        }
+        Ok(Address::from_slice(&self))
+    }
+}
+
+impl TryCast<Address> for Uint8Array {
+    type Error = napi::Error;
+
+    fn try_cast(self) -> std::result::Result<Address, Self::Error> {
+        if self.len() != 20 {
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                "Uint8Array was expected to be 20 bytes.".to_string(),
             ));
         }
         Ok(Address::from_slice(&self))
@@ -54,6 +68,20 @@ impl TryCast<B256> for Buffer {
             ));
         }
         Ok(B256::from_slice(&self))
+    }
+}
+
+impl TryCast<Bytecode> for Uint8Array {
+    type Error = napi::Error;
+
+    fn try_cast(self) -> std::result::Result<Bytecode, Self::Error> {
+        let bytes = Bytes::copy_from_slice(&self);
+        Bytecode::new_raw_checked(bytes).map_err(|error| {
+            napi::Error::new(
+                Status::InvalidArg,
+                format!("Uint8Array was not valid bytecode: {error}"),
+            )
+        })
     }
 }
 

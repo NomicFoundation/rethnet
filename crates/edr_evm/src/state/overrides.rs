@@ -1,11 +1,12 @@
 use std::fmt::Debug;
 
-use edr_eth::{account::KECCAK_EMPTY, Address, B256, U256};
-use edr_rpc_eth::{AccountOverrideOptions, StateOverrideOptions};
-use revm::{
-    db::StateRef,
-    primitives::{AccountInfo, Bytecode, HashMap},
+use edr_eth::{
+    account::{AccountInfo, KECCAK_EMPTY},
+    Address, Bytecode, HashMap, B256, U256,
 };
+use edr_rpc_eth::{AccountOverrideOptions, StateOverrideOptions};
+
+use super::State;
 
 /// Type representing either a diff or full set of overrides for storage
 /// information.
@@ -169,7 +170,7 @@ impl StateOverrides {
     /// overrides.
     pub fn account_info<StateError>(
         &self,
-        state: &dyn StateRef<Error = StateError>,
+        state: &dyn State<Error = StateError>,
         address: &Address,
     ) -> Result<Option<AccountInfo>, StateError> {
         let original = state.basic(*address)?;
@@ -192,7 +193,7 @@ impl StateOverrides {
     /// applying any overrides.
     pub fn account_storage_at<StateError>(
         &self,
-        state: &dyn StateRef<Error = StateError>,
+        state: &dyn State<Error = StateError>,
         address: &Address,
         index: &U256,
     ) -> Result<U256, StateError> {
@@ -217,7 +218,7 @@ impl StateOverrides {
     /// Retrieves the code for the provided hash, applying any overrides.
     pub fn code_by_hash<StateError>(
         &self,
-        state: &dyn StateRef<Error = StateError>,
+        state: &dyn State<Error = StateError>,
         hash: B256,
     ) -> Result<Bytecode, StateError> {
         if let Some(code) = self.code_by_hash_overrides.get(&hash) {
@@ -261,7 +262,7 @@ impl<'overrides, StateT> StateRefOverrider<'overrides, StateT> {
     }
 }
 
-impl<'state, StateT: StateRef> StateRef for StateRefOverrider<'state, StateT> {
+impl<StateT: State> State for StateRefOverrider<'_, StateT> {
     type Error = StateT::Error;
 
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {

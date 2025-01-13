@@ -4,31 +4,34 @@ version = "0.3.5"
 edition = "2021"
 
 [dependencies]
+anyhow = { version = "1.0.89", optional = true }
 alloy-rlp = { version = "0.3", default-features = false, features = ["derive"] }
 async-rwlock = { version = "1.3.0", default-features = false }
 auto_impl = { version = "1.2", default-features = false }
 cita_trie = { version = "4.0.0", default-features = false }
+derive-where = { version = "1.2.7", default-features = false }
 dyn-clone = { version = "1.0.13", default-features = false }
 futures = { version = "0.3.28", features = ["alloc", "async-await", "executor", "std"] }
 hasher = { version = "0.1.4", default-features = false, features = ["hash-keccak"] }
 indexmap = { version = "2.0.0", default-features = false, features = ["std"] }
 itertools = { version = "0.11.0", default-features = false, features = ["use_alloc", "use_std"] }
 log = { version = "0.4.17", default-features = false }
-once_cell = { version = "1.18.0", default-features = false, features = ["alloc", "race", "std"] }
+once_cell = { version = "1.19.0", default-features = false, features = ["alloc", "race", "std"] }
 parking_lot = { version = "0.12.1", default-features = false }
 edr_defaults = { version = "0.3.5", path = "../edr_defaults" }
-edr_eth = { version = "0.3.5", path = "../edr_eth", features = ["rand", "serde"] }
+edr_eth = { version = "0.3.5", path = "../edr_eth", features = ["serde"] }
 edr_rpc_eth = { version = "0.3.5", path = "../edr_rpc_eth" }
-revm = { version = "12.0", default-features = false, features = ["c-kzg", "dev", "serde", "std"] }
+edr_utils = { version = "0.3.5", path = "../edr_utils" }
+revm = { git = "https://github.com/nomicfoundation/revm", rev = "4722477", version = "14.0", default-features = false, features = ["c-kzg", "dev", "serde", "std"] }
 rpds = { version = "1.1.0", default-features = false, features = ["std"] }
-serde = { version = "1.0.158", default-features = false, features = ["std"] }
-serde_json = { version = "1.0.94", default-features = false, features = ["std"] }
+serde = { version = "1.0.209", default-features = false, features = ["std"] }
+serde_json = { version = "1.0.127", default-features = false, features = ["std"] }
 thiserror = { version = "1.0.38", default-features = false }
 tokio = { version = "1.21.2", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
 tracing = { version = "0.1.37", features = ["attributes", "std"], optional = true }
 
 [dev-dependencies]
-anyhow = "1.0.75"
+anyhow = "1.0.89"
 criterion = { version = "0.4.0", default-features = false, features = ["cargo_bench_support", "html_reports", "plotters"] }
 edr_test_utils = { version = "0.3.5", path = "../edr_test_utils" }
 lazy_static = "1.4.0"
@@ -38,7 +41,7 @@ tempfile = "3.7.1"
 
 [features]
 test-remote = []
-test-utils = []
+test-utils = ["dep:anyhow"]
 tracing = ["dep:tracing", "edr_eth/tracing"]
 
 [lints]

@@ -1,8 +1,10 @@
 use std::{collections::BTreeMap, fmt::Debug};
 
-use edr_eth::{account::BasicAccount, Address, B256, U256};
+use edr_eth::{
+    account::{Account, AccountInfo, BasicAccount},
+    Address, HashMap, B256, U256,
+};
 use hasher::{Hasher, HasherKeccak};
-use revm::primitives::{Account, AccountInfo, HashMap};
 use rpds::HashTrieMapSync;
 
 use crate::state::trie::{
@@ -179,7 +181,7 @@ struct AccountTrieMutation<'a> {
     storage_tries: &'a mut StorageTries,
 }
 
-impl<'a> AccountTrieMutation<'a> {
+impl AccountTrieMutation<'_> {
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn init_account(&mut self, address: &Address, account_info: &AccountInfo) {
         let storage_trie = StorageTrie::default();

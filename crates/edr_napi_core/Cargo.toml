@@ -1,0 +1,26 @@
+[package]
+name = "edr_napi_core"
+version = "0.3.5"
+edition = "2021"
+
+[dependencies]
+ansi_term = { version = "0.12.1", default-features = false }
+derive-where = { version = "1.2.7", default-features = false }
+edr_defaults = { path = "../edr_defaults" }
+edr_eth = { path = "../edr_eth" }
+edr_evm = { path = "../edr_evm" }
+edr_generic = { path = "../edr_generic" }
+edr_provider = { path = "../edr_provider" }
+edr_solidity = { path = "../edr_solidity" }
+edr_rpc_client = { path = "../edr_rpc_client" }
+itertools = { version = "0.12.0", default-features = false }
+napi = { version = "2.16.10", default-features = false, features = ["async", "error_anyhow", "napi8", "serde-json"] }
+serde = { version = "1.0.209", features = ["derive"] }
+serde_json = { version = "1.0.127" }
+thiserror = { version = "1.0.37", default-features = false }
+
+[features]
+tracing = ["edr_provider/tracing"]
+
+[lints]
+workspace = true

@@ -5,8 +5,6 @@
 //! The EDR EVM exposes APIs for running and interacting with a multi-threaded
 //! Ethereum Virtual Machine (or EVM).
 
-pub use revm::primitives::*;
-
 pub use crate::{
     block::*,
     debug::{DebugContext, GetContextData},
@@ -22,47 +20,38 @@ pub use crate::{
     runtime::{dry_run, guaranteed_dry_run, run, SyncDatabase},
 };
 
+/// Types for Ethereum blocks.
+pub mod block;
 /// Types for managing Ethereum blockchain
 pub mod blockchain;
-
-/// Database types for managing Ethereum state
-pub mod state;
-
-/// Types used for tracing EVM calls
-pub mod trace;
-
-mod block;
-/// Types for chain specification.
-pub mod chain_spec;
 pub(crate) mod collections;
+/// Types for configuring the runtime.
+pub mod config;
 mod debug;
 mod debug_trace;
+/// Types for interfacing with the evm.
+pub mod evm;
+/// Types for Ethereum hardforks
+pub mod hardfork;
 /// Types for managing Ethereum mem pool
 pub mod mempool;
 mod miner;
-mod precompiles;
+/// Types for managing Ethereum precompiles
+pub mod precompile;
 pub(crate) mod random;
+/// Types for Ethereum transaction receipts.
+pub mod receipt;
+/// Result types for EVM execution.
+pub mod result;
 mod runtime;
+/// Types for chain specification.
+pub mod spec;
+/// Database types for managing Ethereum state
+pub mod state;
 /// Utilities for testing
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+/// Types used for tracing EVM calls
+pub mod trace;
 /// Types for Ethereum transactions
 pub mod transaction;
-
-/// Types for interfacing with the evm
-pub mod evm {
-    pub use revm::{
-        handler::register::{EvmHandler, HandleRegister},
-        FrameOrResult, FrameResult,
-    };
-}
-
-/// Types for interfacing with the interpreter
-pub mod interpreter {
-    pub use revm::interpreter::*;
-}
-
-/// Types for managing Ethereum precompiles
-pub mod precompile {
-    pub use revm::precompile::{u64_to_address, PrecompileSpecId, Precompiles};
-}

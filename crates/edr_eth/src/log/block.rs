@@ -77,13 +77,13 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use crate::{log::Log, Address, Bytes};
+    use crate::{log::ExecutionLog, Address, Bytes};
 
     #[test]
     fn test_block_log_full_serde() -> anyhow::Result<()> {
         let log = BlockLog::Full(FullBlockLog {
             inner: ReceiptLog {
-                inner: Log::new_unchecked(
+                inner: ExecutionLog::new_unchecked(
                     Address::from_str("0000000000000000000000000000000000000011")?,
                     vec![
                         B256::from_str(
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn test_block_log_partial_serde() -> anyhow::Result<()> {
         let log = BlockLog::Partial(ReceiptLog {
-            inner: Log::new_unchecked(
+            inner: ExecutionLog::new_unchecked(
                 Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                 vec![
                     B256::from_str(

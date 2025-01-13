@@ -11,9 +11,8 @@
 // For the original context see: https://github.com/gakonst/ethers-rs/blob/cba6f071aedafb766e82e4c2f469ed5e4638337d/ethers-core/src/utils/hash.rs
 
 use alloy_rlp::{BufMut, Encodable};
-use revm_primitives::keccak256;
 
-use crate::{B256, U256, U64};
+use crate::{keccak256, B256, U256, U64};
 
 /// RLP-encodes the provided value and prepends it with the provided ID.
 pub fn enveloped<T: Encodable>(id: u8, v: &T, out: &mut dyn BufMut) {

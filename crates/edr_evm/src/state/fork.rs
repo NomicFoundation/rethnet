@@ -1,21 +1,24 @@
 use std::sync::Arc;
 
-use edr_eth::{trie::KECCAK_NULL_RLP, Address, B256, U256};
+use derive_where::derive_where;
+use edr_eth::{
+    account::{Account, AccountInfo},
+    trie::KECCAK_NULL_RLP,
+    Address, Bytecode, HashMap, HashSet, B256, U256,
+};
 use edr_rpc_eth::{client::EthRpcClient, spec::RpcSpec};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use revm::{
-    db::components::{State, StateRef},
-    primitives::{Account, AccountInfo, Bytecode, HashMap, HashSet},
-    DatabaseCommit,
-};
 use tokio::runtime;
 
-use super::{remote::CachedRemoteState, RemoteState, StateDebug, StateError, TrieState};
+use super::{
+    remote::CachedRemoteState, RemoteState, State, StateCommit, StateDebug, StateError,
+    StateMut as _, TrieState,
+};
 use crate::random::RandomHashGenerator;
 
 /// A database integrating the state from a remote node and the state from a
 /// local layered database.
-#[derive(Debug)]
+#[derive_where(Debug)]
 pub struct ForkState<ChainSpecT: RpcSpec> {
     local_state: TrieState,
     remote_state: Arc<Mutex<CachedRemoteState<ChainSpecT>>>,
@@ -74,7 +77,7 @@ impl<ChainSpecT: RpcSpec> Clone for ForkState<ChainSpecT> {
     }
 }
 
-impl<ChainSpecT: RpcSpec> StateRef for ForkState<ChainSpecT> {
+impl<ChainSpecT: RpcSpec> State for ForkState<ChainSpecT> {
     type Error = StateError;
 
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -83,7 +86,7 @@ impl<ChainSpecT: RpcSpec> StateRef for ForkState<ChainSpecT> {
         } else if self.removed_remote_accounts.contains(&address) {
             Ok(None)
         } else {
-            self.remote_state.lock().basic(address)
+            self.remote_state.lock().basic_mut(address)
         }
     }
 
@@ -91,7 +94,7 @@ impl<ChainSpecT: RpcSpec> StateRef for ForkState<ChainSpecT> {
         if let Ok(layered) = self.local_state.code_by_hash(code_hash) {
             Ok(layered)
         } else {
-            self.remote_state.lock().code_by_hash(code_hash)
+            self.remote_state.lock().code_by_hash_mut(code_hash)
         }
     }
 
@@ -100,12 +103,12 @@ impl<ChainSpecT: RpcSpec> StateRef for ForkState<ChainSpecT> {
         if local != U256::ZERO || self.removed_storage_slots.contains(&(address, index)) {
             Ok(local)
         } else {
-            self.remote_state.lock().storage(address, index)
+            self.remote_state.lock().storage_mut(address, index)
         }
     }
 }
 
-impl<ChainSpecT: RpcSpec> DatabaseCommit for ForkState<ChainSpecT> {
+impl<ChainSpecT: RpcSpec> StateCommit for ForkState<ChainSpecT> {
     fn commit(&mut self, changes: HashMap<Address, Account>) {
         changes.iter().for_each(|(address, account)| {
             account.storage.iter().for_each(|(index, value)| {
@@ -146,7 +149,7 @@ impl<ChainSpecT: RpcSpec> StateDebug for ForkState<ChainSpecT> {
             address,
             modifier,
             &|| {
-                self.remote_state.lock().basic(address)?.map_or_else(
+                self.remote_state.lock().basic_mut(address)?.map_or_else(
                     || {
                         Ok(AccountInfo {
                             code: None,
@@ -156,7 +159,7 @@ impl<ChainSpecT: RpcSpec> StateDebug for ForkState<ChainSpecT> {
                     Result::Ok,
                 )
             },
-            &|code_hash| self.remote_state.lock().code_by_hash(code_hash),
+            &|code_hash| self.remote_state.lock().code_by_hash_mut(code_hash),
         )
     }
 
@@ -165,7 +168,7 @@ impl<ChainSpecT: RpcSpec> StateDebug for ForkState<ChainSpecT> {
             Ok(Some(account_info))
         } else if self.removed_remote_accounts.contains(&address) {
             Ok(None)
-        } else if let Some(account_info) = self.remote_state.lock().basic(address)? {
+        } else if let Some(account_info) = self.remote_state.lock().basic_mut(address)? {
             self.removed_remote_accounts.insert(address);
             Ok(Some(account_info))
         } else {
@@ -191,7 +194,7 @@ impl<ChainSpecT: RpcSpec> StateDebug for ForkState<ChainSpecT> {
 
         self.local_state
             .set_account_storage_slot_impl(address, index, value, &|| {
-                self.remote_state.lock().basic(address)?.map_or_else(
+                self.remote_state.lock().basic_mut(address)?.map_or_else(
                     || {
                         Ok(AccountInfo {
                             code: None,
@@ -227,11 +230,10 @@ mod tests {
         str::FromStr,
     };
 
-    use edr_eth::PreEip1898BlockSpec;
+    use edr_eth::{l1::L1ChainSpec, PreEip1898BlockSpec};
     use edr_test_utils::env::get_alchemy_url;
 
     use super::*;
-    use crate::chain_spec::L1ChainSpec;
 
     const FORK_BLOCK: u64 = 16220843;
 

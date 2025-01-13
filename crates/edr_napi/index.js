@@ -310,13 +310,41 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { SpecId, EdrContext, MineOrdering, Provider, Response, SuccessReason, ExceptionalHalt, linkHexStringBytecode, printStackTrace, Exit, ExitCode, BytecodeWrapper, ContractFunctionType, ReturnData, StackTraceEntryType, stackTraceEntryTypeToString, FALLBACK_FUNCTION_NAME, RECEIVE_FUNCTION_NAME, CONSTRUCTOR_FUNCTION_NAME, UNRECOGNIZED_FUNCTION_NAME, UNKNOWN_FUNCTION_NAME, PRECOMPILE_FUNCTION_NAME, UNRECOGNIZED_CONTRACT_NAME, RawTrace, getLatestSupportedSolcVersion } = nativeBinding
+const { GENERIC_CHAIN_TYPE, genericChainProviderFactory, L1_CHAIN_TYPE, l1GenesisState, l1HardforkFromString, l1ProviderFactory, SpecId, FRONTIER, FRONTIER_THAWING, HOMESTEAD, DAO_FORK, TANGERINE, SPURIOUS_DRAGON, BYZANTIUM, CONSTANTINOPLE, PETERSBURG, ISTANBUL, MUIR_GLACIER, BERLIN, LONDON, ARROW_GLACIER, GRAY_GLACIER, MERGE, SHANGHAI, CANCUN, PRAGUE, PRAGUE_EOF, LATEST, MineOrdering, EdrContext, ProviderFactory, Response, Provider, SuccessReason, ExceptionalHalt, linkHexStringBytecode, printStackTrace, Exit, ExitCode, BytecodeWrapper, ContractFunctionType, ReturnData, StackTraceEntryType, stackTraceEntryTypeToString, FALLBACK_FUNCTION_NAME, RECEIVE_FUNCTION_NAME, CONSTRUCTOR_FUNCTION_NAME, UNRECOGNIZED_FUNCTION_NAME, UNKNOWN_FUNCTION_NAME, PRECOMPILE_FUNCTION_NAME, UNRECOGNIZED_CONTRACT_NAME, RawTrace, getLatestSupportedSolcVersion } = nativeBinding
 
+module.exports.GENERIC_CHAIN_TYPE = GENERIC_CHAIN_TYPE
+module.exports.genericChainProviderFactory = genericChainProviderFactory
+module.exports.L1_CHAIN_TYPE = L1_CHAIN_TYPE
+module.exports.l1GenesisState = l1GenesisState
+module.exports.l1HardforkFromString = l1HardforkFromString
+module.exports.l1ProviderFactory = l1ProviderFactory
 module.exports.SpecId = SpecId
-module.exports.EdrContext = EdrContext
+module.exports.FRONTIER = FRONTIER
+module.exports.FRONTIER_THAWING = FRONTIER_THAWING
+module.exports.HOMESTEAD = HOMESTEAD
+module.exports.DAO_FORK = DAO_FORK
+module.exports.TANGERINE = TANGERINE
+module.exports.SPURIOUS_DRAGON = SPURIOUS_DRAGON
+module.exports.BYZANTIUM = BYZANTIUM
+module.exports.CONSTANTINOPLE = CONSTANTINOPLE
+module.exports.PETERSBURG = PETERSBURG
+module.exports.ISTANBUL = ISTANBUL
+module.exports.MUIR_GLACIER = MUIR_GLACIER
+module.exports.BERLIN = BERLIN
+module.exports.LONDON = LONDON
+module.exports.ARROW_GLACIER = ARROW_GLACIER
+module.exports.GRAY_GLACIER = GRAY_GLACIER
+module.exports.MERGE = MERGE
+module.exports.SHANGHAI = SHANGHAI
+module.exports.CANCUN = CANCUN
+module.exports.PRAGUE = PRAGUE
+module.exports.PRAGUE_EOF = PRAGUE_EOF
+module.exports.LATEST = LATEST
 module.exports.MineOrdering = MineOrdering
-module.exports.Provider = Provider
+module.exports.EdrContext = EdrContext
+module.exports.ProviderFactory = ProviderFactory
 module.exports.Response = Response
+module.exports.Provider = Provider
 module.exports.SuccessReason = SuccessReason
 module.exports.ExceptionalHalt = ExceptionalHalt
 module.exports.linkHexStringBytecode = linkHexStringBytecode

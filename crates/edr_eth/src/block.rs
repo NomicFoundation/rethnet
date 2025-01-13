@@ -9,8 +9,9 @@ mod options;
 mod reorg;
 mod reward;
 
+use alloy_eips::calc_next_block_base_fee;
 use alloy_rlp::{BufMut, Decodable, RlpDecodable, RlpEncodable};
-use revm_primitives::{calc_blob_gasprice, calc_excess_blob_gas, keccak256};
+pub use revm_wiring::Block;
 
 use self::difficulty::calculate_ethash_canonical_difficulty;
 pub use self::{
@@ -21,7 +22,10 @@ pub use self::{
     },
     reward::miner_reward,
 };
-use crate::{trie::KECCAK_NULL_RLP, Address, Bloom, Bytes, SpecId, B256, B64, U256};
+use crate::{
+    eips::eip4844, keccak256, l1, spec::EthHeaderConstants, trie::KECCAK_NULL_RLP, Address, Bloom,
+    Bytes, B256, B64, U256,
+};
 
 /// ethereum block header
 #[derive(Clone, Debug, Default, PartialEq, Eq, RlpDecodable, RlpEncodable)]
@@ -193,8 +197,12 @@ pub struct PartialHeader {
 
 impl PartialHeader {
     /// Constructs a new instance based on the provided [`BlockOptions`] and
-    /// parent [`Header`] for the given [`SpecId`].
-    pub fn new(spec_id: SpecId, options: BlockOptions, parent: Option<&Header>) -> Self {
+    /// parent [`Header`] for the given [`l1::SpecId`].
+    pub fn new<ChainSpecT: EthHeaderConstants>(
+        hardfork: ChainSpecT::Hardfork,
+        options: BlockOptions,
+        parent: Option<&Header>,
+    ) -> Self {
         let timestamp = options.timestamp.unwrap_or_default();
         let number = options.number.unwrap_or({
             if let Some(parent) = &parent {
@@ -219,10 +227,15 @@ impl PartialHeader {
             receipts_root: KECCAK_NULL_RLP,
             logs_bloom: Bloom::default(),
             difficulty: options.difficulty.unwrap_or_else(|| {
-                if spec_id >= SpecId::MERGE {
+                if hardfork.into() >= l1::SpecId::MERGE {
                     U256::ZERO
                 } else if let Some(parent) = parent {
-                    calculate_ethash_canonical_difficulty(spec_id, parent, number, timestamp)
+                    calculate_ethash_canonical_difficulty::<ChainSpecT>(
+                        hardfork.into(),
+                        parent,
+                        number,
+                        timestamp,
+                    )
                 } else {
                     U256::from(1)
                 }
@@ -234,26 +247,25 @@ impl PartialHeader {
             extra_data: options.extra_data.unwrap_or_default(),
             mix_hash: options.mix_hash.unwrap_or_default(),
             nonce: options.nonce.unwrap_or_else(|| {
-                if spec_id >= SpecId::MERGE {
+                if hardfork.into() >= l1::SpecId::MERGE {
                     B64::ZERO
                 } else {
                     B64::from(66u64)
                 }
             }),
             base_fee: options.base_fee.or_else(|| {
-                if spec_id >= SpecId::LONDON {
+                if hardfork.into() >= l1::SpecId::LONDON {
                     Some(if let Some(parent) = &parent {
-                        calculate_next_base_fee_per_gas(parent)
+                        calculate_next_base_fee_per_gas::<ChainSpecT>(hardfork, parent)
                     } else {
-                        // Initial base fee from https://eips.ethereum.org/EIPS/eip-1559
-                        U256::from(1_000_000_000)
+                        U256::from(alloy_eips::eip1559::INITIAL_BASE_FEE)
                     })
                 } else {
                     None
                 }
             }),
             blob_gas: options.blob_gas.or_else(|| {
-                if spec_id >= SpecId::CANCUN {
+                if hardfork.into() >= l1::SpecId::CANCUN {
                     let excess_gas = parent.and_then(|parent| parent.blob_gas.as_ref()).map_or(
                         // For the first (post-fork) block, both parent.blob_gas_used and
                         // parent.excess_blob_gas are evaluated as 0.
@@ -261,7 +273,9 @@ impl PartialHeader {
                         |BlobGas {
                              gas_used,
                              excess_gas,
-                         }| calc_excess_blob_gas(*excess_gas, *gas_used),
+                         }| {
+                            eip4844::calc_excess_blob_gas(*excess_gas, *gas_used)
+                        },
                     );
 
                     Some(BlobGas {
@@ -273,7 +287,7 @@ impl PartialHeader {
                 }
             }),
             parent_beacon_block_root: options.parent_beacon_block_root.or_else(|| {
-                if spec_id >= SpecId::CANCUN {
+                if hardfork.into() >= l1::SpecId::CANCUN {
                     // Initial value from https://eips.ethereum.org/EIPS/eip-4788
                     Some(B256::ZERO)
                 } else {
@@ -338,36 +352,25 @@ impl From<Header> for PartialHeader {
 /// # Panics
 ///
 /// Panics if the parent header does not contain a base fee.
-pub fn calculate_next_base_fee_per_gas(parent: &Header) -> U256 {
-    let elasticity = 2;
-    let base_fee_max_change_denominator = U256::from(8);
+pub fn calculate_next_base_fee_per_gas<ChainSpecT: EthHeaderConstants>(
+    hardfork: ChainSpecT::Hardfork,
+    parent: &Header,
+) -> U256 {
+    let base_fee_params = ChainSpecT::BASE_FEE_PARAMS
+        .at_hardfork(hardfork)
+        .expect("Chain spec must have base fee params for post-London hardforks");
 
-    let parent_gas_target = parent.gas_limit / elasticity;
-    let parent_base_fee = parent
-        .base_fee_per_gas
-        .expect("Post-London headers must contain a baseFee");
+    let base_fee = calc_next_block_base_fee(
+        parent.gas_used.into(),
+        parent.gas_limit.into(),
+        parent
+            .base_fee_per_gas
+            .expect("Post-London headers must contain a baseFee")
+            .to::<u128>(),
+        *base_fee_params,
+    );
 
-    match parent.gas_used.cmp(&parent_gas_target) {
-        std::cmp::Ordering::Less => {
-            let gas_used_delta = parent_gas_target - parent.gas_used;
-
-            let delta = parent_base_fee * U256::from(gas_used_delta)
-                / U256::from(parent_gas_target)
-                / base_fee_max_change_denominator;
-
-            parent_base_fee.saturating_sub(delta)
-        }
-        std::cmp::Ordering::Equal => parent_base_fee,
-        std::cmp::Ordering::Greater => {
-            let gas_used_delta = parent.gas_used - parent_gas_target;
-
-            let delta = parent_base_fee * U256::from(gas_used_delta)
-                / U256::from(parent_gas_target)
-                / base_fee_max_change_denominator;
-
-            parent_base_fee + delta.max(U256::from(1))
-        }
-    }
+    U256::from(base_fee)
 }
 
 /// Calculates the next base fee per blob gas for a post-Cancun block, given the
@@ -377,7 +380,7 @@ pub fn calculate_next_base_fee_per_blob_gas(parent: &Header) -> U256 {
         .blob_gas
         .as_ref()
         .map_or(U256::ZERO, |BlobGas { excess_gas, .. }| {
-            U256::from(calc_blob_gasprice(*excess_gas))
+            U256::from(eip4844::calc_blob_gasprice(*excess_gas))
         })
 }
 
@@ -385,46 +388,8 @@ pub fn calculate_next_base_fee_per_blob_gas(parent: &Header) -> U256 {
 mod tests {
     use std::str::FromStr;
 
-    use itertools::izip;
-
     use super::*;
     use crate::trie::KECCAK_RLP_EMPTY_ARRAY;
-
-    #[test]
-    fn test_calculate_next_base_fee() {
-        let base_fee = [
-            1000000000, 1000000000, 1000000000, 1072671875, 1059263476, 1049238967, 1049238967, 0,
-            1, 2,
-        ];
-        let gas_used = [
-            10000000, 10000000, 10000000, 9000000, 10001000, 0, 10000000, 10000000, 10000000,
-            10000000,
-        ];
-        let gas_limit = [
-            10000000, 12000000, 14000000, 10000000, 14000000, 2000000, 18000000, 18000000,
-            18000000, 18000000,
-        ];
-        let next_base_fee = [
-            1125000000, 1083333333, 1053571428, 1179939062, 1116028649, 918084097, 1063811730, 1,
-            2, 3,
-        ];
-
-        for (base_fee, gas_used, gas_limit, next_base_fee) in
-            izip!(base_fee, gas_used, gas_limit, next_base_fee)
-        {
-            let parent_header = Header {
-                base_fee_per_gas: Some(U256::from(base_fee)),
-                gas_used,
-                gas_limit,
-                ..Default::default()
-            };
-
-            assert_eq!(
-                U256::from(next_base_fee),
-                calculate_next_base_fee_per_gas(&parent_header)
-            );
-        }
-    }
 
     #[test]
     fn header_rlp_roundtrip() {

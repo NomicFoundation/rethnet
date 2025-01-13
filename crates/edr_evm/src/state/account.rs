@@ -1,17 +1,16 @@
-use edr_eth::state::Storage;
-use revm::primitives::AccountInfo;
+use edr_eth::{account::AccountInfo, state::AccountStorage};
 
 #[derive(Clone, Debug, Default)]
 pub struct EdrAccount {
     pub info: AccountInfo,
-    pub storage: Storage,
+    pub storage: AccountStorage,
 }
 
 impl From<AccountInfo> for EdrAccount {
     fn from(info: AccountInfo) -> Self {
         Self {
             info,
-            storage: Storage::default(),
+            storage: AccountStorage::default(),
         }
     }
 }

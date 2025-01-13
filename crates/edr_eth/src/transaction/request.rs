@@ -9,7 +9,10 @@ use k256::SecretKey;
 pub use self::{
     eip155::Eip155, eip1559::Eip1559, eip2930::Eip2930, eip4844::Eip4844, legacy::Legacy,
 };
-use super::{Request, Signed};
+use super::{
+    signed::{FakeSign, Sign},
+    Request, Signed,
+};
 use crate::{signature::SignatureError, Address, U256};
 
 impl Request {
@@ -73,14 +76,26 @@ impl Request {
             Request::Eip4844(transaction) => transaction.sign(secret_key)?.into(),
         })
     }
+}
 
-    /// Signs the transaction with the provided secret key, belonging to the
-    /// provided sender's address.
-    ///
-    /// # Safety
-    ///
-    /// The `caller` and `secret_key` must correspond to the same account.
-    pub unsafe fn sign_for_sender_unchecked(
+impl FakeSign for Request {
+    type Signed = Signed;
+
+    fn fake_sign(self, sender: Address) -> Signed {
+        match self {
+            Request::Legacy(transaction) => transaction.fake_sign(sender).into(),
+            Request::Eip155(transaction) => transaction.fake_sign(sender).into(),
+            Request::Eip2930(transaction) => transaction.fake_sign(sender).into(),
+            Request::Eip1559(transaction) => transaction.fake_sign(sender).into(),
+            Request::Eip4844(transaction) => transaction.fake_sign(sender).into(),
+        }
+    }
+}
+
+impl Sign for Request {
+    type Signed = Signed;
+
+    unsafe fn sign_for_sender_unchecked(
         self,
         secret_key: &SecretKey,
         caller: Address,
@@ -103,23 +118,13 @@ impl Request {
                 .into(),
         })
     }
-
-    pub fn fake_sign(self, sender: Address) -> Signed {
-        match self {
-            Request::Legacy(transaction) => transaction.fake_sign(sender).into(),
-            Request::Eip155(transaction) => transaction.fake_sign(sender).into(),
-            Request::Eip2930(transaction) => transaction.fake_sign(sender).into(),
-            Request::Eip1559(transaction) => transaction.fake_sign(sender).into(),
-            Request::Eip4844(transaction) => transaction.fake_sign(sender).into(),
-        }
-    }
 }
 
 /// A transaction request and the sender's address.
 #[derive(Clone, Debug)]
-pub struct TransactionRequestAndSender {
+pub struct TransactionRequestAndSender<RequestT> {
     /// The transaction request.
-    pub request: Request,
+    pub request: RequestT,
     /// The sender's address.
     pub sender: Address,
 }

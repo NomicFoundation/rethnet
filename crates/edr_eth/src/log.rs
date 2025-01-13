@@ -2,7 +2,7 @@ mod block;
 mod filter;
 mod receipt;
 
-pub use revm_primitives::Log;
+pub use revm_primitives::Log as ExecutionLog;
 
 pub use self::{
     block::{BlockLog, FullBlockLog},
@@ -11,8 +11,17 @@ pub use self::{
 };
 use crate::{Address, Bloom, BloomInput, HashSet, B256};
 
+/// Constructs a bloom filter from the provided logs.
+pub fn logs_to_bloom(logs: &[ExecutionLog]) -> Bloom {
+    let mut bloom = Bloom::ZERO;
+    for log in logs {
+        add_log_to_bloom(log, &mut bloom);
+    }
+    bloom
+}
+
 /// Adds the log to a bloom hash.
-pub fn add_log_to_bloom(log: &Log, bloom: &mut Bloom) {
+fn add_log_to_bloom(log: &ExecutionLog, bloom: &mut Bloom) {
     bloom.accrue(BloomInput::Raw(log.address.as_slice()));
 
     log.topics()

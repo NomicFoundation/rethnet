@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use alloy_rlp::BufMut;
 
-use crate::{log::Log, B256};
+use crate::{log::ExecutionLog, B256};
 
 /// A log that's part of a transaction receipt.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -11,13 +11,13 @@ use crate::{log::Log, B256};
 pub struct ReceiptLog {
     /// Execution log
     #[cfg_attr(feature = "serde", serde(flatten))]
-    pub inner: Log,
+    pub inner: ExecutionLog,
     /// transaction hash
     pub transaction_hash: B256,
 }
 
 impl Deref for ReceiptLog {
-    type Target = Log;
+    type Target = ExecutionLog;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -39,12 +39,12 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use crate::{log::Log, Address, Bytes};
+    use crate::{log::ExecutionLog, Address, Bytes};
 
     #[test]
     fn test_receipt_log_serde() -> anyhow::Result<()> {
         let log = ReceiptLog {
-            inner: Log::new_unchecked(
+            inner: ExecutionLog::new_unchecked(
                 Address::from_str("0000000000000000000000000000000000000011")?,
                 vec![
                     B256::from_str(

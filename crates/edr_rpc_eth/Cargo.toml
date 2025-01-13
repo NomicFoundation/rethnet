@@ -4,26 +4,33 @@ version = "0.3.5"
 edition = "2021"
 
 [dependencies]
+alloy-eips = { version = "0.3", default-features = false }
+alloy-serde = { version = "0.3.5", default-features = false, features = ["std"] }
+derive-where = { version = "1.2.7", default-features = false }
 edr_eth = { version = "0.3.5", path = "../edr_eth", features = ["serde"] }
 edr_rpc_client = { version = "0.3.5", path = "../edr_rpc_client" }
 futures = { version = "0.3.28", default-features = false, features = ["std"] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 log = { version = "0.4.17", default-features = false }
-serde = { version = "1.0.147", default-features = false, features = ["derive", "std"] }
+serde = { version = "1.0.209", default-features = false, features = ["derive", "std"] }
 thiserror = { version = "1.0.37", default-features = false }
 tokio = { version = "1.21.2", default-features = false, features = ["macros"] }
 tracing = { version = "0.1.37", default-features = false, features = ["attributes", "std"], optional = true }
 
 [dev-dependencies]
-anyhow = { version = "1.0.75", default-features = false, features = ["std"] }
+anyhow = { version = "1.0.89", default-features = false, features = ["std"] }
+assert-json-diff = "2.0.2"
+edr_evm = { version = "0.3.5", path = "../edr_evm" }
 edr_test_utils = { version = "0.3.5", path = "../edr_test_utils" }
 mockito = { version = "1.0.2", default-features = false }
+paste = { version = "1.0.14", default-features = false }
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "json"] }
-serde_json = { version = "1.0.89" }
+serde_json = { version = "1.0.127" }
 tempfile = { version = "3.7.1", default-features = false }
 walkdir = { version = "2.3.3", default-features = false }
 
 [features]
+test-utils = []
 test-remote = []
 tracing = ["dep:tracing", "edr_rpc_client/tracing"]
 

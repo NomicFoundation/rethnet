@@ -1,7 +1,7 @@
 //! Enriches the [`NestedTrace`] with the resolved [`ContractMetadata`].
 use std::sync::Arc;
 
-use edr_eth::Bytes;
+use edr_eth::{spec::HaltReasonTrait, Bytes};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -62,7 +62,10 @@ impl ContractDecoder {
     }
 
     /// Enriches the [`NestedTrace`] with the resolved [`ContractMetadata`].
-    pub fn try_to_decode_message_trace(&self, message_trace: NestedTrace) -> NestedTrace {
+    pub fn try_to_decode_message_trace<HaltReasonT: HaltReasonTrait>(
+        &self,
+        message_trace: NestedTrace<HaltReasonT>,
+    ) -> NestedTrace<HaltReasonT> {
         match message_trace {
             precompile @ NestedTrace::Precompile(..) => precompile,
             // NOTE: The branches below are the same with the difference of `is_create`

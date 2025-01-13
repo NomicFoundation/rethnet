@@ -1,8 +1,10 @@
 use core::fmt::Debug;
 
+use edr_eth::spec::HaltReasonTrait;
 use edr_evm::{
-    db::Database,
-    evm::EvmHandler,
+    evm::handler::register::EvmHandler,
+    spec::EvmWiring,
+    state::Database,
     trace::{register_trace_collector_handles, TraceCollector},
     GetContextData,
 };
@@ -13,27 +15,27 @@ use crate::{
 };
 
 /// Registers debugger handles.
-pub fn register_debugger_handles<DatabaseT, ContextT>(
-    handler: &mut EvmHandler<'_, ContextT, DatabaseT>,
-) where
-    DatabaseT: Database,
-    DatabaseT::Error: Debug,
-    ContextT: GetContextData<ConsoleLogCollector>
-        + GetContextData<Mocker>
-        + GetContextData<TraceCollector>,
+pub fn register_debugger_handles<EvmWiringT>(handler: &mut EvmHandler<'_, EvmWiringT>)
+where
+    EvmWiringT: EvmWiring<
+        ExternalContext: GetContextData<ConsoleLogCollector>
+                             + GetContextData<Mocker>
+                             + GetContextData<TraceCollector<EvmWiringT::HaltReason>>,
+        Database: Database<Error: Debug>,
+    >,
 {
     register_console_log_handles(handler);
     register_mocking_handles(handler);
     register_trace_collector_handles(handler);
 }
 
-pub struct Debugger {
+pub struct Debugger<HaltReasonT: HaltReasonTrait> {
     pub console_logger: ConsoleLogCollector,
     pub mocker: Mocker,
-    pub trace_collector: TraceCollector,
+    pub trace_collector: TraceCollector<HaltReasonT>,
 }
 
-impl Debugger {
+impl<HaltReasonT: HaltReasonTrait> Debugger<HaltReasonT> {
     /// Creates a new instance with the provided mocker.
     /// If verbose is true, full stack and memory will be recorded for each
     /// step.
@@ -46,20 +48,22 @@ impl Debugger {
     }
 }
 
-impl GetContextData<ConsoleLogCollector> for Debugger {
+impl<HaltReasonT: HaltReasonTrait> GetContextData<ConsoleLogCollector> for Debugger<HaltReasonT> {
     fn get_context_data(&mut self) -> &mut ConsoleLogCollector {
         &mut self.console_logger
     }
 }
 
-impl GetContextData<Mocker> for Debugger {
+impl<HaltReasonT: HaltReasonTrait> GetContextData<Mocker> for Debugger<HaltReasonT> {
     fn get_context_data(&mut self) -> &mut Mocker {
         &mut self.mocker
     }
 }
 
-impl GetContextData<TraceCollector> for Debugger {
-    fn get_context_data(&mut self) -> &mut TraceCollector {
+impl<HaltReasonT: HaltReasonTrait> GetContextData<TraceCollector<HaltReasonT>>
+    for Debugger<HaltReasonT>
+{
+    fn get_context_data(&mut self) -> &mut TraceCollector<HaltReasonT> {
         &mut self.trace_collector
     }
 }

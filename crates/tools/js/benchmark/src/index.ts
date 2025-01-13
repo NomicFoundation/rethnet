@@ -416,8 +416,8 @@ function preprocessConfig(config: any) {
   const chains: any = new Map();
   for (const key of Object.keys(config.providerConfig.chains)) {
     const hardforkHistory = new Map();
-    const hardforks = config.providerConfig.chains[key].hardforks;
-    for (const [blockNumber, hardfork] of hardforks) {
+    const hardforks = config.providerConfig.chains[key];
+    for (const { hardfork, blockNumber } of hardforks) {
       hardforkHistory.set(normalizeHardfork(hardfork), blockNumber);
     }
     chains.set(Number(key), { hardforkHistory });
@@ -436,11 +436,13 @@ function preprocessConfig(config: any) {
 }
 
 function normalizeHardfork(hardfork: string) {
-  hardfork = _.camelCase(hardfork.toLowerCase());
+  hardfork = _.camelCase(hardfork);
   if (hardfork === "frontier") {
     hardfork = "chainstart";
   } else if (hardfork === "daoFork") {
     hardfork = "dao";
+  } else if (hardfork === "spurious") {
+    hardfork = "spuriousDragon";
   } else if (hardfork === "tangerine") {
     hardfork = "tangerineWhistle";
   }

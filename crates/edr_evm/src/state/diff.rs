@@ -1,8 +1,12 @@
-use edr_eth::{Address, U256};
-use revm::primitives::{Account, AccountInfo, AccountStatus, EvmStorageSlot, HashMap};
+use edr_eth::{
+    account::{Account, AccountInfo, AccountStatus},
+    Address, HashMap, U256,
+};
+
+use crate::state::EvmStorageSlot;
 
 /// The difference between two states, which can be applied to a state to get
-/// the new state using [`revm::db::DatabaseCommit::commit`].
+/// the new state using [`revm::database_interface::DatabaseCommit::commit`].
 #[derive(Clone, Debug, Default)]
 pub struct StateDiff {
     inner: HashMap<Address, Account>,

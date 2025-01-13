@@ -5,7 +5,10 @@ mod sparse;
 use edr_eth::B256;
 
 pub use self::{
-    contiguous::ContiguousBlockchainStorage, reservable::ReservableSparseBlockchainStorage,
+    contiguous::ContiguousBlockchainStorage,
+    reservable::{
+        ReservableSparseBlockchainStorage, ReservableSparseBlockchainStorageForChainSpec,
+    },
     sparse::SparseBlockchainStorage,
 };
 

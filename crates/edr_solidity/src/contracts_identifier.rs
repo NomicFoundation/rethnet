@@ -7,8 +7,7 @@
 
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
-use edr_eth::Address;
-use edr_evm::interpreter::OpCode;
+use edr_eth::{bytecode::opcode::OpCode, Address};
 
 use crate::build_model::ContractMetadata;
 

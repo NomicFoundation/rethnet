@@ -1,0 +1,7 @@
+[package]
+name = "edr_utils"
+version = "0.3.5"
+edition = "2021"
+
+[lints]
+workspace = true

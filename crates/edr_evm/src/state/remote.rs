@@ -3,22 +3,21 @@ mod cached;
 use std::sync::Arc;
 
 pub use cached::CachedRemoteState;
-use edr_eth::{Address, BlockSpec, PreEip1898BlockSpec, B256, U256};
+use derive_where::derive_where;
+use edr_eth::{
+    account::AccountInfo, Address, BlockSpec, Bytecode, PreEip1898BlockSpec, B256, U256,
+};
 use edr_rpc_eth::{
     client::{EthRpcClient, RpcClientError},
     spec::RpcSpec,
 };
-use revm::{
-    db::StateRef,
-    primitives::{AccountInfo, Bytecode},
-};
 use tokio::runtime;
 
-use super::StateError;
-use crate::{chain_spec::ChainSpec, EthRpcBlock as _};
+use super::{State, StateError};
+use crate::{spec::RuntimeSpec, EthRpcBlock as _};
 
 /// A state backed by a remote Ethereum node
-#[derive(Debug)]
+#[derive_where(Debug)]
 pub struct RemoteState<ChainSpecT: RpcSpec> {
     client: Arc<EthRpcClient<ChainSpecT>>,
     runtime: runtime::Handle,
@@ -59,7 +58,7 @@ impl<ChainSpecT: RpcSpec> RemoteState<ChainSpecT> {
     }
 }
 
-impl<ChainSpecT: ChainSpec> RemoteState<ChainSpecT> {
+impl<ChainSpecT: RuntimeSpec> RemoteState<ChainSpecT> {
     /// Retrieve the state root of the given block, if it exists.
     pub fn state_root(&self, block_number: u64) -> Result<Option<B256>, RpcClientError> {
         Ok(tokio::task::block_in_place(move || {
@@ -72,7 +71,7 @@ impl<ChainSpecT: ChainSpec> RemoteState<ChainSpecT> {
     }
 }
 
-impl<ChainSpecT: RpcSpec> StateRef for RemoteState<ChainSpecT> {
+impl<ChainSpecT: RpcSpec> State for RemoteState<ChainSpecT> {
     type Error = StateError;
 
     #[cfg_attr(feature = "tracing", tracing::instrument(level = "trace", skip(self)))]
@@ -111,7 +110,7 @@ impl<ChainSpecT: RpcSpec> StateRef for RemoteState<ChainSpecT> {
 mod tests {
     use std::str::FromStr;
 
-    use edr_rpc_eth::spec::EthRpcSpec;
+    use edr_eth::l1::L1ChainSpec;
     use tokio::runtime;
 
     use super::*;
@@ -126,7 +125,7 @@ mod tests {
             .expect("couldn't convert OsString into a String");
 
         let rpc_client =
-            EthRpcClient::<EthRpcSpec>::new(&alchemy_url, tempdir.path().to_path_buf(), None)
+            EthRpcClient::<L1ChainSpec>::new(&alchemy_url, tempdir.path().to_path_buf(), None)
                 .expect("url ok");
 
         let dai_address = Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f")

@@ -6,33 +6,35 @@
 //! [^1]: for that, we internally use the sparse implementation via
 //! [`SparseBlockchainStorage`](super::sparse::SparseBlockchainStorage).
 
-use std::{marker::PhantomData, sync::Arc};
+use std::marker::PhantomData;
 
-use edr_eth::{receipt::BlockReceipt, transaction::Transaction, B256, U256};
+use derive_where::derive_where;
+use edr_eth::{
+    receipt::ReceiptTrait, spec::HardforkTrait, transaction::ExecutableTransaction, B256, U256,
+};
 use revm::primitives::HashMap;
 
 use super::InsertError;
-use crate::{chain_spec::ChainSpec, Block, LocalBlock};
+use crate::{Block, EmptyBlock, LocalBlock};
 
 /// A storage solution for storing a Blockchain's blocks contiguously in-memory.
-#[derive(Clone, Default, Debug)]
-pub struct ContiguousBlockchainStorage<BlockT, ChainSpecT>
-where
-    BlockT: Block<ChainSpecT> + Clone + ?Sized,
-    ChainSpecT: ChainSpec,
-{
+#[derive_where(Clone, Debug, Default; BlockReceiptT, BlockT)]
+pub struct ContiguousBlockchainStorage<
+    BlockReceiptT,
+    BlockT,
+    HardforkT: HardforkTrait,
+    SignedTransactionT,
+> {
     blocks: Vec<BlockT>,
     hash_to_block: HashMap<B256, BlockT>,
     total_difficulties: Vec<U256>,
     transaction_hash_to_block: HashMap<B256, BlockT>,
-    transaction_hash_to_receipt: HashMap<B256, Arc<BlockReceipt>>,
-    phantom: PhantomData<ChainSpecT>,
+    transaction_hash_to_receipt: HashMap<B256, BlockReceiptT>,
+    phantom: PhantomData<(HardforkT, SignedTransactionT)>,
 }
 
-impl<BlockT, ChainSpecT> ContiguousBlockchainStorage<BlockT, ChainSpecT>
-where
-    BlockT: Block<ChainSpecT> + Clone,
-    ChainSpecT: ChainSpec,
+impl<BlockReceiptT, BlockT, HardforkT: HardforkTrait, SignedTransactionT>
+    ContiguousBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
 {
     /// Retrieves the instance's blocks.
     pub fn blocks(&self) -> &[BlockT] {
@@ -52,13 +54,23 @@ where
 
     /// Retrieves the receipt of the transaction with the provided hash, if it
     /// exists.
-    pub fn receipt_by_transaction_hash(
-        &self,
-        transaction_hash: &B256,
-    ) -> Option<&Arc<BlockReceipt>> {
+    pub fn receipt_by_transaction_hash(&self, transaction_hash: &B256) -> Option<&BlockReceiptT> {
         self.transaction_hash_to_receipt.get(transaction_hash)
     }
 
+    /// Retrieves the instance's total difficulties.
+    pub fn total_difficulties(&self) -> &[U256] {
+        &self.total_difficulties
+    }
+}
+
+impl<
+        BlockReceiptT,
+        BlockT: Block<SignedTransactionT>,
+        HardforkT: HardforkTrait,
+        SignedTransactionT,
+    > ContiguousBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
+{
     /// Reverts to the block with the provided number, deleting all later
     /// blocks.
     pub fn revert_to_block(&mut self, block_number: &U256) -> bool {
@@ -86,7 +98,7 @@ where
         let removed_blocks = self.blocks.split_off(block_index + 1);
 
         for block in removed_blocks {
-            let block_hash = block.hash();
+            let block_hash = block.block_hash();
 
             self.hash_to_block.remove(block_hash);
             self.transaction_hash_to_block.remove(block_hash);
@@ -94,11 +106,6 @@ where
         }
 
         true
-    }
-
-    /// Retrieves the instance's total difficulties.
-    pub fn total_difficulties(&self) -> &[U256] {
-        &self.total_difficulties
     }
 
     /// Retrieves the total difficulty of the block with the provided hash.
@@ -120,22 +127,22 @@ where
     }
 }
 
-impl<BlockT, ChainSpecT> ContiguousBlockchainStorage<BlockT, ChainSpecT>
-where
-    BlockT: Block<ChainSpecT> + Clone + From<LocalBlock<ChainSpecT>>,
-    ChainSpecT: ChainSpec,
+impl<
+        BlockReceiptT: Clone + ReceiptTrait,
+        BlockT: Block<SignedTransactionT> + EmptyBlock<HardforkT> + LocalBlock<BlockReceiptT> + Clone,
+        HardforkT: HardforkTrait,
+        SignedTransactionT: ExecutableTransaction,
+    > ContiguousBlockchainStorage<BlockReceiptT, BlockT, HardforkT, SignedTransactionT>
 {
     /// Constructs a new instance with the provided block.
-    pub fn with_block(block: LocalBlock<ChainSpecT>, total_difficulty: U256) -> Self {
-        let block_hash = *block.hash();
+    pub fn with_block(block: BlockT, total_difficulty: U256) -> Self {
+        let block_hash = *block.block_hash();
 
         let transaction_hash_to_receipt = block
             .transaction_receipts()
             .iter()
-            .map(|receipt| (receipt.transaction_hash, receipt.clone()))
+            .map(|receipt| (*receipt.transaction_hash(), receipt.clone()))
             .collect();
-
-        let block = BlockT::from(block);
 
         let transaction_hash_to_block = block
             .transactions()
@@ -159,10 +166,10 @@ where
     /// Inserts a block, failing if a block with the same hash already exists.
     pub fn insert_block(
         &mut self,
-        block: LocalBlock<ChainSpecT>,
+        block: BlockT,
         total_difficulty: U256,
     ) -> Result<&BlockT, InsertError> {
-        let block_hash = block.hash();
+        let block_hash = block.block_hash();
 
         // As blocks are contiguous, we are guaranteed that the block number won't exist
         // if its hash is not present.
@@ -194,17 +201,15 @@ where
     /// nor any transactions with the same hash.
     pub unsafe fn insert_block_unchecked(
         &mut self,
-        block: LocalBlock<ChainSpecT>,
+        block: BlockT,
         total_difficulty: U256,
     ) -> &BlockT {
         self.transaction_hash_to_receipt.extend(
             block
                 .transaction_receipts()
                 .iter()
-                .map(|receipt| (receipt.transaction_hash, receipt.clone())),
+                .map(|receipt| (*receipt.transaction_hash(), receipt.clone())),
         );
-
-        let block = BlockT::from(block);
 
         self.transaction_hash_to_block.extend(
             block
@@ -216,7 +221,7 @@ where
         self.blocks.push(block.clone());
         self.total_difficulties.push(total_difficulty);
         self.hash_to_block
-            .insert_unique_unchecked(*block.hash(), block)
+            .insert_unique_unchecked(*block.block_hash(), block)
             .1
     }
 }
