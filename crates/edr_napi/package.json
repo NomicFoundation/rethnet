@@ -1,6 +1,6 @@
 {
   "name": "@nomicfoundation/edr",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
     "@types/chai": "^4.2.0",
