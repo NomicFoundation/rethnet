@@ -1,5 +1,11 @@
 # @nomicfoundation/edr
 
+## 0.7.1
+
+### Patch Changes
+
+- 4ffb4f6: fix: ignore unknown opcodes in source maps
+
 ## 0.7.0
 
 ### Minor Changes
