@@ -116,4 +116,35 @@ describe("Provider", () => {
     // Validate that we can query the response data without crashing.
     const _json = new JsonStreamStringify(responseData);
   });
+
+  it("issue 771", async function () {
+    const provider = await context.createProvider(
+      GENERIC_CHAIN_TYPE,
+      {
+        genesisState: [],
+        initialBaseFeePerGas: 0n,
+        ...providerConfig,
+        mining: {
+          // Enable interval mining to validate that provider shutdown works correctly
+          interval: 1n,
+          ...providerConfig.mining,
+        },
+      },
+      loggerConfig,
+      {
+        subscriptionCallback: (_event: SubscriptionEvent) => {},
+      },
+      {}
+    );
+
+    // Make a dummy request to ensure the provider constructor doesn't become a no-op
+    await provider.handleRequest(
+      JSON.stringify({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "eth_blockNumber",
+        params: [],
+      })
+    );
+  });
 });

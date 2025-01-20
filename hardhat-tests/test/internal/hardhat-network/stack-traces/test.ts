@@ -297,7 +297,9 @@ function compareStackTraces(
     const actual = trace[i];
     const expected = description[i];
 
-    const actualErrorType = stackTraceEntryTypeToString(actual.type);
+    // TODO this `as any` is a temporary workaround until we replace
+    // @ignored/edr-optimism with @nomicfoundation/edr
+    const actualErrorType = stackTraceEntryTypeToString(actual.type as any);
     const expectedErrorType = expected.type;
 
     if (

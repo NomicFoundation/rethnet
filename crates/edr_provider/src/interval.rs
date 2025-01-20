@@ -110,12 +110,12 @@ impl<ChainSpecT: RuntimeSpec, TimerT> Drop for IntervalMiner<ChainSpecT, TimerT>
             background_task: task,
         }) = self.inner.take()
         {
-            cancellation_sender
-                .send(())
-                .expect("Failed to send cancellation signal");
-
-            let _result = tokio::task::block_in_place(move || self.runtime.block_on(task))
-                .expect("Failed to join interval mininig task");
+            if let Ok(()) = cancellation_sender.send(()) {
+                let _result = tokio::task::block_in_place(move || self.runtime.block_on(task))
+                    .expect("Failed to join interval mininig task");
+            } else {
+                log::debug!("Failed to send cancellation signal to interval mining task. The runtime must have already terminated.");
+            }
         }
     }
 }

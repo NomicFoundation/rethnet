@@ -13,7 +13,7 @@ import {
 import { EdrProviderWrapper } from "hardhat/internal/hardhat-network/provider/provider";
 import { LoggerConfig } from "hardhat/internal/hardhat-network/provider/modules/logger";
 import { SolidityStackTrace } from "hardhat/internal/hardhat-network/stack-traces/solidity-stack-trace";
-import { Response } from "@nomicfoundation/edr";
+import { Response } from "@ignored/edr-optimism";
 
 function toBuffer(x: Parameters<typeof toBytes>[0]) {
   return Buffer.from(toBytes(x));

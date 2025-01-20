@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "author": "Nomic Foundation",
   "devDependencies": {
-    "@metamask/eth-sig-util": "^4.0.0",
     "@ignored/edr-optimism": "workspace:*",
+    "@metamask/eth-sig-util": "^4.0.0",
     "@nomicfoundation/ethereumjs-block": "5.0.4",
     "@nomicfoundation/ethereumjs-common": "^4.0.4",
     "@nomicfoundation/ethereumjs-tx": "^5.0.4",
